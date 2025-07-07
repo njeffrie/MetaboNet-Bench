@@ -245,39 +245,3 @@ class CGMDataSet:
         
         self.dataset.save_to_disk(output_path)
         self.logger.info(f"Dataset saved to {output_path}")
-
-
-def main():
-    """
-    Example usage of the CGMDataSet class.
-    """
-    # Initialize the dataset
-    cgm_dataset = CGMDataSet()
-    
-    # Load the data (use chunk_size for large files)
-    cgm_dataset.load_data(chunk_size=100000)  # Load in chunks of 100k rows
-    
-    # Print summary statistics
-    stats = cgm_dataset.get_summary_stats()
-    print("Dataset Summary:")
-    for key, value in stats.items():
-        print(f"  {key}: {value}")
-    
-    # Get all patient IDs
-    patient_ids = cgm_dataset.get_patient_ids()
-    print(f"\nAll patient IDs (first 10): {patient_ids[:10]}")
-    print(f"Total patients: {len(patient_ids)}")
-    
-    # Example: Yield consecutive CGM sequences for patient 1
-    print("\nConsecutive CGM sequences for patient 1:")
-    for i, sequence in enumerate(cgm_dataset.yield_consecutive_cgm_sequences()):
-        print(f"  Sequence {i+1}: {len(sequence)} consecutive readings")
-        if i >= 4:  # Limit output for demo
-            break
-    
-    # Save the dataset
-    cgm_dataset.save_dataset("cgm_dataset")
-
-
-if __name__ == "__main__":
-    main()
