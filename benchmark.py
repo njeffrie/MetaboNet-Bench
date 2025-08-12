@@ -6,8 +6,8 @@ import pandas as pd
 import click
 
 def load_dataset(name: str, split: str):
-    parquet_files = f'data/{name}/dataset_{split}.parquet'
-    return Dataset.from_parquet(parquet_files)['sequences']
+    ds_path = f'data/{name}/dataset/{split}'
+    return Dataset.load_from_disk(ds_path)['sequences']
 
 def calculate_rmse(pred, label):
     return np.sqrt(np.mean((pred - label) ** 2))

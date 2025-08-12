@@ -103,25 +103,15 @@ class DatsetPreprocessor:
         print(f"Found {len(sequences)} sequences")
         
         # Stack all sequences into a single array of shape (-1, 3, 192)
-        all_sequences = np.stack(sequences)
-        del sequences
+        sequences = np.stack(sequences)
 
         # If the dataset is too large, use 20k samples rather than 10% to speed up the benchmark.
-        test_size = min(len(all_sequences) // 10 , 20000)
+        test_size = min(len(sequences) // 10 , 20000)
         
-        # Convert to datasets
-        def create_dataset(array):
-            return Dataset.from_dict({
-                'sequences': array.tolist()
-            })
-        
-        ds_all = create_dataset(all_sequences)
-
-        # Use a fixed seed to ensure reproducibility and avoid test/train overlap.
-        ds_all.shuffle(seed=42)
-
-        ds_all.select(range(test_size)).to_parquet(f'{self.dataset_dir}/dataset_test.parquet')
-        ds_all.select(range(test_size, len(ds_all))).to_parquet(f'{self.dataset_dir}/dataset_train.parquet')
+        # Shuffle with a predetermined seed to produce a reproducible split.
+        ds = Dataset.from_dict({'sequences': sequences.tolist()}).shuffle(seed=42)
+        ds = ds.train_test_split(test_size=test_size, shuffle=False)
+        ds.save_to_disk(f'{self.dataset_dir}/dataset')
 
 
 if __name__ == "__main__":
