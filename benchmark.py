@@ -1,4 +1,4 @@
-from models.gluformer import Gluformer
+from models.models import get_model
 import numpy as np
 from tqdm import tqdm
 from datasets import Dataset
@@ -17,10 +17,11 @@ def calculate_ape(pred, label):
 
 @click.command()
 @click.option('--dataset', type=str, default='Brown2019', help='Dataset to run the benchmark on')
-def main(dataset, split='test'):
+@click.option('--model', type=str, default='gluformer', help='Model to run the benchmark on')
+def main(dataset, model, split='test'):
     cgm_data_set = load_dataset(dataset, split)
     ds_len = len(cgm_data_set)
-    gluformer = Gluformer()
+    model_runner = get_model(model.lower())
     horizons = [3, 6, 9, 12] # 15, 30, 45, 60 minutes.
     rmses = np.zeros((ds_len, len(horizons)))
     apes = np.zeros((ds_len, len(horizons)))
@@ -31,7 +32,7 @@ def main(dataset, split='test'):
         label = glucose_values[180:192]
         subject_id = sample[0][0]
 
-        pred, log_var = gluformer.predict(subject_id, timestamps, model_input)
+        pred = model_runner.predict(subject_id, timestamps, model_input)
         pred = pred.flatten()
         #print(f'pred {pred.shape} label {label.shape}')
         for j in range(len(horizons)):
@@ -39,10 +40,8 @@ def main(dataset, split='test'):
             apes[i, j] = calculate_ape(pred[horizons[j]-1], label[horizons[j]-1])
         i += 1
 
-    np.save('rmses.npy', rmses)
-    np.save('apes.npy', apes)
-    print(f'average mse {np.mean(rmses, axis=0)}')
-    print(f'average ape {np.mean(apes, axis=0)}')
+    print(f'Mean Squared Error (MSE) at 15/30/45/60 minutes: {np.mean(rmses, axis=0)}')
+    print(f'Absolute Percent Error (APE) at 15/30/45/60 minutes: {np.mean(apes, axis=0)}')
 
 if __name__ == "__main__":
     main()

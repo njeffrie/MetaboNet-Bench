@@ -1,27 +1,33 @@
-# CGM Dataset Processor
+# Glucose Predction Benchmark
 
-This module provides a `CGMDataSet` class that converts CGM (Continuous Glucose Monitoring) data from a pipe-separated text file into a HuggingFace Dataset format.
+This benchmark provides methods to compare glucose prediction models across a set of high quality datasets.
 
 ## Installation
 
 1. Install the required dependencies:
+
 ```bash
+uv venv .env
+source .env/bin/activate
 pip install -r requirements.txt
-
-Download the [Brown 2019 dataset](https://public.jaeb.org/dataset/573) and extract to `./brown_dataset`
 ```
 
-## Usage
+Download the following dataset zipfiles and save to the `data` directory:
+- [Anderson 2016](https://public.jaeb.org/jdrfapp2/stdy/download/465)
+- [Brown 2019](https://public.jaeb.org/dataset/573)
+- [Lynch 2022](https://public.jaeb.org/dataset/579)
 
-Run the example script to see the class in action:
-
+Run the extraction and preprocessing scripts (may take a few minutes):
 ```bash
-python brown_2019_example.py
+pushd && cd data
+python extract.py
+python preprocess.py
+popd
 ```
 
-## Dataset Statistics
+## Benchmark the pre-trained Gluformer model
+./run_benchmark.sh --model='njeffrie/Gluformer'
 
-Brown 2019:
-- **Total records**: 9,032,236
-- **File size**: 401MB
-- **Columns**: 4 (PtID, Period, DataDtTm, CGM)
+## Benchmark Custom Model
+
+Either create a huggingface model locally, or 

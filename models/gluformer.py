@@ -3,9 +3,9 @@ from datetime import datetime
 import torch
 
 class Gluformer:
-    def __init__(self):
-        self.model = AutoModel.from_pretrained('njeffrie/Gluformer', trust_remote_code=True)
-        self.config = AutoConfig.from_pretrained('njeffrie/Gluformer', trust_remote_code=True)
+    def __init__(self, huggingface_model_name: str = 'njeffrie/Gluformer'):
+        self.model = AutoModel.from_pretrained(huggingface_model_name, trust_remote_code=True)
+        self.config = AutoConfig.from_pretrained(huggingface_model_name, trust_remote_code=True)
         self.model.eval()
 
     def predict(self, subject_id, timestamps, input_glucose):
@@ -19,4 +19,4 @@ class Gluformer:
             timestamps = timestamps[:self.config.len_seq]
         with torch.no_grad():
             pred, log_var = self.model(subject_id, timestamps, glucose)
-        return pred.numpy(), log_var.numpy()
+        return pred.numpy()
