@@ -94,28 +94,20 @@ class DatsetPreprocessor:
                 for i in range(0, len(group) - min_sequence_length + 1, 12): # increment by one hour.
                     # Create a dataset for this sequence
                     sequence = group.drop(['time_diff', 'sequence_id'], axis=1)[i:i+min_sequence_length]
-                    sequences.append(sequence)
+                    sequence_array = np.array([
+                        sequence['PtID'].values,
+                        sequence['DataDtTm'].astype(np.int64).values,  # Convert datetime to unix timestamp
+                        sequence['CGM'].values
+                    ])
+                    sequences.append(sequence_array)
         print(f"Found {len(sequences)} sequences")
-
-        # Convert sequences to 3D array format
-        reshaped_sequences = []
-        for seq in sequences:
-            # Ensure sequence is exactly 192 timesteps
-            if len(seq) == 192:
-                # Create array of shape (3, 192) for this sequence
-                sequence_array = np.array([
-                    seq['PtID'].values,
-                    seq['DataDtTm'].astype(np.int64).values,  # Convert datetime to unix timestamp
-                    seq['CGM'].values
-                ])
-                reshaped_sequences.append(sequence_array)
-
-        # Stack all sequences into a single array of shape (-1, 3, 192)
-        all_sequences = np.stack(reshaped_sequences)
         
+        # Stack all sequences into a single array of shape (-1, 3, 192)
+        all_sequences = np.stack(sequences)
+        del sequences
+
         # Split into train/val/test
         test_size = int(len(all_sequences) * 0.1)
-        val_size = int(len(all_sequences) * 0.1)
         
         # Convert to datasets
         def create_dataset(array):
@@ -123,14 +115,13 @@ class DatsetPreprocessor:
                 'sequences': array.tolist()  # Convert to list for HuggingFace dataset
             })
         
-        ds_test = create_dataset(all_sequences[:test_size])
-        ds_val = create_dataset(all_sequences[test_size:test_size+val_size])
-        ds_train = create_dataset(all_sequences[test_size+val_size:])
-        
-        # Save datasets
+        ds_train = create_dataset(all_sequences[test_size:])
         ds_train.to_parquet(f'{self.dataset_dir}/dataset_train.parquet')
-        ds_val.to_parquet(f'{self.dataset_dir}/dataset_val.parquet')
+        del ds_train
+
+        ds_test = create_dataset(all_sequences[:test_size])
         ds_test.to_parquet(f'{self.dataset_dir}/dataset_test.parquet')
+        del ds_test
 
 
 if __name__ == "__main__":
