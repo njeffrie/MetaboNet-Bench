@@ -106,22 +106,22 @@ class DatsetPreprocessor:
         all_sequences = np.stack(sequences)
         del sequences
 
-        # Split into train/val/test
-        test_size = int(len(all_sequences) * 0.1)
+        # If the dataset is too large, use 20k samples rather than 10% to speed up the benchmark.
+        test_size = min(len(all_sequences) // 10 , 20000)
         
         # Convert to datasets
         def create_dataset(array):
             return Dataset.from_dict({
-                'sequences': array.tolist()  # Convert to list for HuggingFace dataset
+                'sequences': array.tolist()
             })
         
-        ds_train = create_dataset(all_sequences[test_size:])
-        ds_train.to_parquet(f'{self.dataset_dir}/dataset_train.parquet')
-        del ds_train
+        ds_all = create_dataset(all_sequences)
 
-        ds_test = create_dataset(all_sequences[:test_size])
-        ds_test.to_parquet(f'{self.dataset_dir}/dataset_test.parquet')
-        del ds_test
+        # Use a fixed seed to ensure reproducibility and avoid test/train overlap.
+        ds_all.shuffle(seed=42)
+
+        ds_all.select(range(test_size)).to_parquet(f'{self.dataset_dir}/dataset_test.parquet')
+        ds_all.select(range(test_size, len(ds_all))).to_parquet(f'{self.dataset_dir}/dataset_train.parquet')
 
 
 if __name__ == "__main__":
