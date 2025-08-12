@@ -13,11 +13,20 @@ def extract_all_zipfiles():
     # Find all zip files in current directory
     zip_files = glob.glob("*.zip")
     
+    # Default download names mapped to dataset names.
+    dataset_names_map = {
+        'IOBP2 RCT Public Dataset.zip': 'Lynch2022',
+        'DCLP3 Public Dataset - Release 3 - 2022-08-04.zip': 'Brown2019',
+        'CTR3_Public_Dataset.zip': 'Anderson2016'
+    }
     print(f"Found {len(zip_files)} zip files: {zip_files}")
     
     for zip_file in zip_files:
+        if zip_file not in dataset_names_map:
+            continue
+
         # Get the directory name (zip filename without .zip extension)
-        dir_name = os.path.splitext(zip_file)[0]
+        dir_name = dataset_names_map[zip_file]
         
         print(f"\nExtracting {zip_file} to {dir_name}/")
         
