@@ -9,7 +9,7 @@ This benchmark provides methods to compare glucose prediction models across a se
 ```bash
 uv venv .env
 source .env/bin/activate
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 Download the following dataset zipfiles and save to the `data` directory:
@@ -19,10 +19,10 @@ Download the following dataset zipfiles and save to the `data` directory:
 
 Run the extraction and preprocessing scripts (may take a few minutes):
 ```bash
-pushd && cd data
+cd data
 python extract.py
 python preprocess.py
-popd
+cd ..
 ```
 
 ## Benchmark the pre-trained Gluformer model (default model and datasets)
