@@ -25,9 +25,13 @@ python preprocess.py
 popd
 ```
 
-## Benchmark the pre-trained Gluformer model
-./run_benchmark.sh --model='njeffrie/Gluformer'
+## Benchmark the pre-trained Gluformer model (default model and datasets)
+```bash
+./run_benchmark.sh
+```
 
 ## Benchmark Custom Model
 
-Either create a huggingface model locally, or 
+Create a model runner in `models/<model_name>.py` and add your model to the model name to runner dictionary in `models/model.py` then run the benchmark with `./run_benchmark.sh --model=<model_name>`
+
+See models/gluformer for an example. It is strongly encouraged to share the model with weights on huggingface hub. See the pretrained [Gluformer model](https://huggingface.co/njeffrie/Gluformer) for an example.
