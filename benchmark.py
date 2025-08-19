@@ -7,7 +7,7 @@ import click
 
 def load_dataset(name: str, split: str):
     ds_path = f'data/{name}/dataset/{split}'
-    return Dataset.load_from_disk(ds_path)['sequences']
+    return Dataset.load_from_disk(ds_path)
 
 def calculate_rmse(pred, label):
     return np.sqrt(np.mean((pred - label) ** 2))
@@ -25,12 +25,12 @@ def main(dataset, model, split='test'):
     horizons = [3, 6, 9, 12] # 15, 30, 45, 60 minutes.
     rmses = np.zeros((ds_len, len(horizons)))
     apes = np.zeros((ds_len, len(horizons)))
-    for i, sample in tqdm(enumerate(cgm_data_set)):
-        timestamps = pd.to_datetime(sample[1][:180]).to_list()
-        glucose_values = sample[2]
+    for i in tqdm(range(ds_len)):
+        timestamps = pd.to_datetime(cgm_data_set['DataDtTm'][i][:180]).to_list()
+        glucose_values = cgm_data_set['CGM'][i]
         model_input = glucose_values[:180]
         label = glucose_values[180:192]
-        subject_id = sample[0][0]
+        subject_id = cgm_data_set['PtID'][i][0]
 
         pred = model_runner.predict(subject_id, timestamps, model_input)
         pred = pred.flatten()

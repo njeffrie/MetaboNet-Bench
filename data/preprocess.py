@@ -69,7 +69,9 @@ class DatsetPreprocessor:
         
         patient_ids = sorted(df['PtID'].unique().tolist())
         
-        sequences = []
+        patient_id_list = []
+        date_times = []
+        glucose_values = []
 
         for pid in tqdm(patient_ids):
             # Filter data for the specific patient (already sorted by timestamp)
@@ -94,23 +96,23 @@ class DatsetPreprocessor:
                 for i in range(0, len(group) - min_sequence_length + 1, 12): # increment by one hour.
                     # Create a dataset for this sequence
                     sequence = group.drop(['time_diff', 'sequence_id'], axis=1)[i:i+min_sequence_length]
-                    sequence_array = np.array([
-                        sequence['PtID'].values,
-                        sequence['DataDtTm'].astype(np.int64).values,  # Convert datetime to unix timestamp
-                        sequence['CGM'].values
-                    ])
-                    sequences.append(sequence_array)
-        print(f"Found {len(sequences)} sequences")
+                    patient_id_list.append(np.array(sequence['PtID'].values[:1], dtype=np.int32))
+                    date_times.append(np.array(sequence['DataDtTm'].astype(np.int64).values, dtype=np.int64))
+                    glucose_values.append(np.array(sequence['CGM'].values, dtype=np.float32))
+        print(f"Found {len(patient_id_list)} sequences")
         
         # Stack all sequences into a single array of shape (-1, 3, 192)
-        sequences = np.stack(sequences)
+        patient_ids_np = np.stack(patient_id_list)
+        date_times_np = np.stack(date_times)
+        glucose_values_np = np.stack(glucose_values)
 
         # If the dataset is too large, use 20k samples rather than 10% to speed up the benchmark.
-        test_size = min(len(sequences) // 10 , 20000)
+        test_size = min(len(patient_id_list) // 10 , 20000)
         
         # Shuffle with a predetermined seed to produce a reproducible split.
-        ds = Dataset.from_dict({'sequences': sequences.tolist()}).shuffle(seed=42)
+        ds = Dataset.from_dict({'PtID': patient_ids_np, 'DataDtTm': date_times_np, 'CGM': glucose_values_np}).shuffle(seed=42)
         ds = ds.train_test_split(test_size=test_size, shuffle=False)
+
         ds.save_to_disk(f'{self.dataset_dir}/dataset')
 
 
