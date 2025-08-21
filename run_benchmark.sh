@@ -39,6 +39,8 @@ echo "  Models: ${MODEL_ARRAY[*]}"
 echo "  Datasets: ${DATASET_ARRAY[*]}"
 echo ""
 
+mkdir -p plots
+
 # Run benchmark for every permutation of model and dataset
 for model in "${MODEL_ARRAY[@]}"; do
     for dataset in "${DATASET_ARRAY[@]}"; do
@@ -46,7 +48,7 @@ for model in "${MODEL_ARRAY[@]}"; do
         echo "Running benchmark: Model=$model, Dataset=$dataset"
         echo "=========================================="
         
-        python benchmark.py --dataset "$dataset" --model "$model"
+        python benchmark.py --dataset "$dataset" --model "$model" --plot --save_plot "plots/${model}-${dataset}.png"
         
         if [ $? -ne 0 ]; then
             echo "✗ Benchmark failed for $model on $dataset"
