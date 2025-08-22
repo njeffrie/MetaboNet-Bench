@@ -17,7 +17,7 @@ def calculate_rmse(pred, label):
 def calculate_ape(pred, label):
     return np.mean(np.abs(pred - label) / np.abs(label))
 
-def plot_prediction_percentiles(predictions, labels, dataset_name, model_name, save_path=None):
+def plot_prediction_percentiles(predictions, labels, rmse, ape, dataset_name, model_name, save_path=None):
     """
     Plot percentiles of predictions vs labels throughout the prediction window.
     
@@ -52,11 +52,8 @@ def plot_prediction_percentiles(predictions, labels, dataset_name, model_name, s
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
-    # Add RMSE and APE annotations
-    rmse_values = [calculate_rmse(predictions[:, i], labels[:, i]) for i in range(predictions.shape[1])]
-    ape_values = [calculate_ape(predictions[:, i], labels[:, i]) for i in range(predictions.shape[1])]
     
-    ax1.text(0.02, 0.98, f'Final RMSE: {rmse_values[-1]:.2f}\nFinal APE: {ape_values[-1]:.2f}%', 
+    ax1.text(0.02, 0.98, f'Final RMSE: {rmse}\nFinal APE: {ape}%', 
              transform=ax1.transAxes, verticalalignment='top',
              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
     
@@ -94,10 +91,10 @@ def main(dataset, model, plot, save_plot, split='test'):
     all_labels = []
     
     for i in tqdm(range(ds_len), desc=f"Running {model} on {dataset}"):
-        timestamps = pd.to_datetime(cgm_data_set['DataDtTm'][i][:180]).to_list()
+        timestamps = pd.to_datetime(cgm_data_set['DataDtTm'][i][-72:-12]).to_list()
         glucose_values = cgm_data_set['CGM'][i]
-        model_input = glucose_values[:180]
-        label = glucose_values[180:192]
+        model_input = glucose_values[-72:-12]
+        label = glucose_values[-12:]
         subject_id = cgm_data_set['PtID'][i][0]
 
         pred = model_runner.predict(subject_id, timestamps, model_input)
@@ -114,7 +111,7 @@ def main(dataset, model, plot, save_plot, split='test'):
 
     # Print results
     print(f'\nResults for {model} on {dataset}:')
-    print(f'Mean Squared Error (MSE) at 15/30/45/60 minutes: {np.mean(rmses, axis=0)}')
+    print(f'Root Mean Squared Error (RMSE) at 15/30/45/60 minutes: {np.mean(rmses, axis=0)}')
     print(f'Absolute Percent Error (APE) at 15/30/45/60 minutes: {np.mean(apes, axis=0)}')
     
     # Generate plots if requested
@@ -125,7 +122,9 @@ def main(dataset, model, plot, save_plot, split='test'):
         print(f"\nGenerating prediction vs label plots...")
         plot_prediction_percentiles(
             all_predictions, 
-            all_labels, 
+            all_labels,
+            np.round(np.mean(rmses, axis=0), 2),
+            np.round(100 * np.mean(apes, axis=0), 2),
             dataset, 
             model, 
             save_path=save_plot
