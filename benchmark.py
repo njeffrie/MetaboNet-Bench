@@ -9,7 +9,9 @@ import seaborn as sns
 
 def load_dataset(name: str, split: str):
     ds_path = f'data/{name}/dataset/{split}'
-    return Dataset.load_from_disk(ds_path)
+    ds = Dataset.load_from_disk(ds_path)
+    ds.set_format('torch')
+    return ds
 
 def calculate_rmse(pred, label):
     return np.sqrt(np.mean((pred - label) ** 2))
@@ -58,7 +60,7 @@ def plot_prediction_percentiles(predictions, labels, rmse, ape, dataset_name, mo
              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
     
     # Subplot 2: Individual error lines
-    for pred_diff in pred_differences:
+    for pred_diff in pred_differences[-1000:]:
         ax2.plot(time_points, pred_diff, alpha=0.1, linewidth=1)
     
     ax2.set_ylabel('Absolute Prediction Error')
@@ -78,8 +80,8 @@ def plot_prediction_percentiles(predictions, labels, rmse, ape, dataset_name, mo
 @click.option('--plot', is_flag=True, help='Generate prediction vs label plots')
 @click.option('--save_plot', type=str, default=None, help='Path to save the plot (e.g., "plots/gluformer_brown2019.png")')
 def main(dataset, model, plot, save_plot, split='test'):
-    cgm_data_set = load_dataset(dataset, split)
-    ds_len = len(cgm_data_set)
+    ds = load_dataset(dataset, split)
+    ds_len = len(ds)
     model_runner = get_model(model.lower())
     horizons = [3, 6, 9, 12] # 15, 30, 45, 60 minutes.
     
@@ -90,12 +92,13 @@ def main(dataset, model, plot, save_plot, split='test'):
     all_predictions = []
     all_labels = []
     
-    for i in tqdm(range(ds_len), desc=f"Running {model} on {dataset}"):
-        timestamps = pd.to_datetime(cgm_data_set['DataDtTm'][i][-72:-12]).to_list()
-        glucose_values = cgm_data_set['CGM'][i]
-        model_input = glucose_values[-72:-12]
-        label = glucose_values[-12:]
-        subject_id = cgm_data_set['PtID'][i][0]
+    i = 0
+    for sample in tqdm(ds):
+        timestamps = sample['DataDtTm']
+        glucose_values = sample['CGM']
+        subject_id = sample['PtID']
+        model_input = glucose_values[-192:-12]
+        label = glucose_values[-12:].numpy()
 
         pred = model_runner.predict(subject_id, timestamps, model_input)
         pred = pred.flatten()
@@ -108,6 +111,7 @@ def main(dataset, model, plot, save_plot, split='test'):
         for j in range(len(horizons)):
             rmses[i, j] = calculate_rmse(pred[horizons[j]-1], label[horizons[j]-1])
             apes[i, j] = calculate_ape(pred[horizons[j]-1], label[horizons[j]-1])
+        i += 1
 
     # Print results
     print(f'\nResults for {model} on {dataset}:')
