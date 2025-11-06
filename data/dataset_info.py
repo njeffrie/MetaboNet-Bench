@@ -13,12 +13,12 @@ ds_info = {
     "Brown2019": {
         "sep": "|",
         "skiprows": 1,
-        "data_file": "Brown2019/Data Files/cgm.txt",
-        "datetime_format": "%d%b%y:%H:%M:%S",
+        "data_file": "Brown2019/Data Files/Pump_CGMGlucoseValue.txt",
+        "datetime_format": "%Y-%m-%d %H:%M:%S",
         "columns":{
             "ID": "PtID",
             "DateTime": "DataDtTm",
-            "CGM": "CGM"
+            "CGM": "CGMValue"
         }
     },
     "Buckinham2007": {
