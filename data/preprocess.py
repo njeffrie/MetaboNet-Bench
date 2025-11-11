@@ -6,57 +6,27 @@ import numpy as np
 import zipfile
 
 import dataset_info
+from dataset_processors import brown2019
+from dataset_processors import anderson2016
 
 class DatsetPreprocessor:
     """
-    A class to convert CGM data from text file format to HuggingFace Dataset.
-    
-    The CGM data file contains pipe-separated values with a header line containing column names.
-    Column names are automatically read from the first line of the file.
+    Class to preprocess datasets.
+
+    Converts text files to prepared datasets for training and testing.
     """
     
     def __init__(self, ds_name: str):
-        self.dataset_info = dataset_info.get(ds_name)
         self.dataset_dir = ds_name
-        self.load_data()
+        self.dataset = self.load_data(ds_name)
     
-    def load_data(self):
-        """
-        Load the CGM data from the text file.
-        
-        Args:
-            chunk_size (Optional[int]): If provided, load data in chunks to handle large files
-        
-        Returns:
-            CGMDataSet: Self for method chaining
-        """
+    def load_data(self, dataset_name: str):
+        if dataset_name == 'Anderson2016':
+            return anderson2016.preprocess(os.path.abspath(dataset_name))
+        if dataset_name == "Brown2019":
+            return brown2019.preprocess(os.path.abspath(dataset_name))
 
-        print(f"Loading CGM data from {self.dataset_info['data_file']}")
-        
-        # Load entire file at once, skipping the header
-        df = pd.read_csv(self.dataset_info['data_file'], sep=self.dataset_info['sep'], skiprows=0)#self.dataset_info['skiprows'])
-        
-        # Convert data types
-        df['PtID'] = df[self.dataset_info['columns']['ID']].astype(int)
-        df['CGM'] = pd.to_numeric(df[self.dataset_info['columns']['CGM']], errors='coerce')
-        
-        # Convert datetime column
-        datetime_names = self.dataset_info['columns']['DateTime']
-        datetime_format = self.dataset_info['datetime_format']
-        if isinstance(datetime_names, list): # TODO: this does not work for all datasets
-            date_col = pd.to_datetime(df[datetime_names[0]], format=datetime_format[0])
-            time_col = pd.to_timedelta(df[datetime_names[1]])
-            
-            df['DataDtTm'] = date_col + time_col
-        else: # Handle case where date and time are combined.
-            df['DataDtTm'] = pd.to_datetime(df[datetime_names].astype(str).str.strip(), format=datetime_format, errors='coerce')
-        
-        self.dataset = df[['PtID', 'DataDtTm', 'CGM']]
-        
-        print(f"Successfully loaded {len(df)} CGM records")
-    
-    def preprocess(self, min_sequence_length: int = 192, 
-                                      max_gap_minutes: int = 6):
+    def preprocess(self, min_sequence_length: int = 192, max_gap_minutes: int = 6):
         """
         This method identifies sequences of consecutive CGM readings where the time gap
         between consecutive readings is within the specified threshold.
@@ -131,7 +101,7 @@ def extract_zipfile(ds_name):
         zip_ref.extractall(ds_name)
 
 if __name__ == "__main__":
-    for ds in ["Anderson2016", "Brown2019", "Lynch2022"]:
+    for ds in ["Anderson2016", "Brown2019"]:
         if not os.path.exists(ds):
             extract_zipfile(ds)
         cgm_dataset = DatsetPreprocessor(ds)
