@@ -2,10 +2,8 @@ from models.models import get_model
 import numpy as np
 from tqdm import tqdm
 from datasets import Dataset
-import pandas as pd
 import click
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 def load_dataset(name: str, split: str):
     ds_path = f'data/{name}/dataset/{split}'
@@ -95,32 +93,45 @@ def main(dataset, model, plot, save_plot, split='test', subset_size=None):
     all_predictions = []
     all_labels = []
     
-    i = 0
-    for sample in tqdm(ds):
-        timestamps = sample['DataDtTm']
-        glucose_values = sample['CGM']
-        subject_id = sample['PtID']
-        model_input = glucose_values[-192:-12]
-        label = glucose_values[-12:].numpy()
+    patient_ids = ds['PtID'].unique()
 
-        pred = model_runner.predict(subject_id, timestamps, model_input)
-        pred = pred.flatten()
+    i = 0
+    for patient_id in tqdm(patient_ids):
+        patient_data = ds[ds['PtID'] == patient_id]
+        timestamps = patient_data['DataDtTm']
+
+        # Calculate time differences between consecutive readings
+        timestamps_diff = timestamps.diff().dt.total_seconds() / 60  # Convert to minutes
         
-        # Store for plotting
-        all_predictions.append(pred)
-        all_labels.append(label)
-        
-        # Calculate metrics for each horizon
-        for j in range(len(horizons)):
-            rmses[i, j] = calculate_rmse(pred[horizons[j]-1], label[horizons[j]-1])
-            apes[i, j] = calculate_ape(pred[horizons[j]-1], label[horizons[j]-1])
-        i += 1
+        # Identify sequence breaks (gaps larger than max_gap_minutes)
+        # First row will have NaN time_diff, so we mark it as False (not a break)
+        sequence_breaks = timestamps_diff > max_gap_minutes
+        sequence_breaks.iloc[0] = False  # First reading starts a new sequence
+
+        # Create sequence IDs
+        sequence_ids = sequence_breaks.cumsum()
+
+        for sequence_id in sequence_ids.unique():
+            sequence_data = patient_data[sequence_ids == sequence_id]
+            if len(sequence_data) < min_sequence_length:
+                continue
+            for i in range(0, len(sequence_data) - min_sequence_length + 1, 12): # increment by one hour.
+                model_input = sequence_data['CGM'].values[-192:-12]
+                label = sequence_data['CGM'].values[-12:].numpy()
+                pred = model_runner.predict(patient_id, timestamps, model_input)
+                pred = pred.flatten()
+
+                # Calculate metrics for each horizon
+                for j in range(len(horizons)):
+                    rmses[i, j] = calculate_rmse(pred[horizons[j]-1], label[horizons[j]-1])
+                    apes[i, j] = calculate_ape(pred[horizons[j]-1], label[horizons[j]-1])
+                i += 1
 
     # Print results
     print(f'\nResults for {model} on {dataset}:')
     print(f'Root Mean Squared Error (RMSE) at 15/30/45/60 minutes: {np.mean(rmses, axis=0)}')
     print(f'Absolute Percent Error (APE) at 15/30/45/60 minutes: {np.mean(apes, axis=0)}')
-    
+
     # Generate plots if requested
     if plot:
         all_predictions = np.array(all_predictions)
