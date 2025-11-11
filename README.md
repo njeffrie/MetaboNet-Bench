@@ -16,11 +16,12 @@ Download the following dataset zipfiles and save to the `data` directory:
 - [Anderson 2016](https://public.jaeb.org/jdrfapp2/stdy/download/465)
 - [Brown 2019](https://public.jaeb.org/dataset/573)
 - [Lynch 2022](https://public.jaeb.org/dataset/579)
+- [Manchester 2024](https://github.com/sharpic/ManchesterCSCoordinatedDiabetesStudy/archive/refs/tags/V1.0.4.zip)
+- [AZT1D](https://data.mendeley.com/public-files/datasets/gk9m674wcx/files/b02a20be-27c4-4dd0-8bb5-9171c66262fb/file_downloaded)
 
 Run the extraction and preprocessing scripts (may take a few minutes):
 ```bash
 cd data
-python extract.py
 python preprocess.py
 cd ..
 ```
