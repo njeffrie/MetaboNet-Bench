@@ -77,10 +77,13 @@ def plot_prediction_percentiles(predictions, labels, rmse, ape, dataset_name, mo
 @click.command()
 @click.option('--dataset', type=str, default='Brown2019', help='Dataset to run the benchmark on')
 @click.option('--model', type=str, default='gluformer', help='Model to run the benchmark on')
+@click.option('--subset_size', type=int, default=None, help='Subset size to run the benchmark on')
 @click.option('--plot', is_flag=True, help='Generate prediction vs label plots')
 @click.option('--save_plot', type=str, default=None, help='Path to save the plot (e.g., "plots/gluformer_brown2019.png")')
-def main(dataset, model, plot, save_plot, split='test'):
+def main(dataset, model, plot, save_plot, split='test', subset_size=None):
     ds = load_dataset(dataset, split)
+    if subset_size is not None:
+        ds = ds.take(subset_size)
     ds_len = len(ds)
     model_runner = get_model(model.lower())
     horizons = [3, 6, 9, 12] # 15, 30, 45, 60 minutes.
