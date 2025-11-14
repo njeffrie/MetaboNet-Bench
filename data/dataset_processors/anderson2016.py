@@ -14,8 +14,6 @@ def preprocess(ds_dir):
     cgm_data = pd.read_csv(cgm_file, sep='|')
     insulin_data = pd.read_csv(insulin_file, sep='|')
 
-    print(cgm_data.keys())
-
     cgm_data['LocalDtTm'] = pd.to_datetime(cgm_data['LocalDtTm'], format='%Y-%m-%d %H:%M:%S', errors='coerce').dt.floor('5min')
     insulin_data['LocalDeliveredDtTm'] = pd.to_datetime(insulin_data['LocalDeliveredDtTm'], format='%Y-%m-%d %H:%M:%S', errors='coerce').dt.floor('5min')
     insulin_datetimes = set(insulin_data['LocalDeliveredDtTm'].unique())
@@ -26,7 +24,6 @@ def preprocess(ds_dir):
     for patient in tqdm(patients):
         patient_cgm = cgm_data[cgm_data['DeidentID'] == patient]
         patient_insulin = insulin_data[insulin_data['DeidentID'] == patient]
-        
 
         for idx, sample in patient_cgm.iterrows():
             dt = sample['LocalDtTm']
