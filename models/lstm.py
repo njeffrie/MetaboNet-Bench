@@ -11,8 +11,14 @@ class SimpleLSTM(nn.Module):
     Input shape: (batch_size, len_seq, 1)
     Output shape: (batch_size, len_pred)
     """
-    def __init__(self, input_size: int = 1, hidden_size: int = 128, num_layers: int = 2,
-                 dropout: float = 0.1, len_seq: int = 180, len_pred: int = 12):
+
+    def __init__(self,
+                 input_size: int = 1,
+                 hidden_size: int = 128,
+                 num_layers: int = 2,
+                 dropout: float = 0.1,
+                 len_seq: int = 180,
+                 len_pred: int = 12):
         super().__init__()
         self.len_seq = len_seq
         self.len_pred = len_pred
@@ -35,18 +41,25 @@ class SimpleLSTM(nn.Module):
         pred = self.projection(last_hidden)  # (batch, len_pred)
         return pred
 
+
 class LSTM:
-    def __init__(self, huggingface_model_name: str = 'njeffrie/LSTMGlucosePrediction'):
-        self.model = AutoModel.from_pretrained(huggingface_model_name, trust_remote_code=True)
-        self.config = AutoConfig.from_pretrained(huggingface_model_name, trust_remote_code=True)
+
+    def __init__(
+            self,
+            huggingface_model_name: str = 'njeffrie/LSTMGlucosePrediction'):
+        self.model = AutoModel.from_pretrained(huggingface_model_name,
+                                               trust_remote_code=True)
+        self.config = AutoConfig.from_pretrained(huggingface_model_name,
+                                                 trust_remote_code=True)
         self.model.eval()
 
     def predict(self, subject_id, timestamps, input_glucose):
         if len(input_glucose) < self.config.len_seq:
-            print(f'input_glucose length {len(input_glucose)} is less than config.len_seq {self.config.len_seq}')
-        assert(len(input_glucose) >= self.config.len_seq)
+            print(
+                f'input_glucose length {len(input_glucose)} is less than config.len_seq {self.config.len_seq}'
+            )
+        assert (len(input_glucose) >= self.config.len_seq)
         glucose = input_glucose[-self.config.len_seq:].numpy()
         with torch.no_grad():
-            pred= self.model(glucose)
+            pred = self.model(glucose)
         return pred.numpy()
-        
