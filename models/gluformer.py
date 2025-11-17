@@ -19,7 +19,7 @@ class Gluformer:
                 f'input_glucose length {len(input_glucose)} is less than config.len_seq {self.config.len_seq}'
             )
         assert (len(input_glucose) >= self.config.len_seq)
-        glucose = input_glucose[-self.config.len_seq:].numpy()
+        glucose = input_glucose[-self.config.len_seq:]
         timestamps = [
             pd.to_datetime(date) for date in timestamps[-self.config.len_seq:]
         ]

@@ -63,7 +63,7 @@ def preprocess(ds_dir):
         total_data = total_data.sort_values('DataDtTm').reset_index(drop=True)
 
         # Append data to the dataset.
-        dataset_output['PtID'].extend([patient_id] * len(total_data))
+        dataset_output['PtID'].extend([int(patient_id)] * len(total_data))
         dataset_output['DataDtTm'].extend(total_data['DataDtTm'])
         dataset_output['Insulin'].extend(total_data['basal_dose'] +
                                          total_data['bolus_dose'])

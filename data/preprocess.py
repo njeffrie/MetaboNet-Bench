@@ -35,49 +35,48 @@ class DatsetPreprocessor:
 
     def interpolate_data(self, max_gap_minutes: int = 30):
         patient_ids = self.dataset['PtID'].unique()
-        interpolated_dataset = {
-            'PtID': [],
-            'DataDtTm': [],
-            'CGM': [],
-            'Insulin': []
-        }
+        ds = pd.DataFrame()
 
-        for patient_id in patient_ids:
+        for patient_id in tqdm(patient_ids, position=0):
             # Get data for the specified patient.
             patient_data = self.dataset[self.dataset['PtID'] == patient_id]
             # Normalize the timestamp to 5 minute intervals.
             patient_data['DataDtTm'].apply(lambda x: pd.to_datetime(x))
             patient_data['DataDtTm'].apply(lambda x: x.floor('5min'))
-            patient_data = patient_data.sort_values('DataDtTm')
-            patient_data = patient_data.reset_index(drop=True)
-            # Identify sequence breaks beyond the specified threshold.
-            patient_data['time_diff'] = patient_data['DataDtTm'].diff(
-            ).dt.total_seconds() / 60  # Convert to minutes
-            sequence_breaks = patient_data['time_diff'] > max_gap_minutes
-            sequence_breaks.iloc[
-                0] = False  # First reading starts a new sequence
-            patient_data['sequence_id'] = sequence_breaks.cumsum()
-            for idx, sequence in patient_data.groupby('sequence_id'):
-                sequence_times = pd.date_range(sequence['DataDtTm'].min(),
-                                               sequence['DataDtTm'].max(),
-                                               freq='5min')
-                sequence_data = sequence.merge(
-                    pd.DataFrame({'DataDtTm': sequence_times}),
-                    on='DataDtTm',
-                    how='left').sort_values('DataDtTm').reset_index(drop=True)
-                sequence_data['CGM'] = sequence_data['CGM'].interpolate(
-                    method='linear')
-                sequence_data[['Insulin',
-                               'PtID']] = sequence_data[['Insulin',
-                                                         'PtID']].ffill()
+            start_time = patient_data['DataDtTm'].min()
+            end_time = patient_data['DataDtTm'].max()
+            sequence_times = pd.date_range(start_time, end_time, freq='5min')
+            patient_data = patient_data.merge(
+                pd.DataFrame({'DataDtTm': sequence_times}),
+                on='DataDtTm',
+                how='outer').sort_values('DataDtTm').reset_index(drop=True)
+            patient_data['Insulin'] = patient_data['Insulin'].fillna(value=0.0)
+            patient_data['PtID'] = patient_data['PtID'].ffill()
 
-                interpolated_dataset['CGM'].extend(list(sequence_data['CGM']))
-                interpolated_dataset['Insulin'].extend(
-                    list(sequence_data['Insulin']))
-                interpolated_dataset['PtID'].extend(list(sequence_data['PtID']))
-                interpolated_dataset['DataDtTm'].extend(
-                    list(sequence_data['DataDtTm']))
-        self.dataset = pd.DataFrame(interpolated_dataset)
+            # Interpolate CGM but only keep sub-30 minute gaps bookended by valid data.
+            patient_data['CGM'] = patient_data['CGM'].interpolate(
+                method='linear',
+                limit_direction='forward',
+                limit=6,
+                limit_area='inside')
+            mask = patient_data['CGM'].isna()
+            mask = mask.where(mask, other=np.nan)
+            mask = mask.bfill(limit=6, limit_area='outside')
+            mask = mask.isna()
+            patient_data['CGM'] = patient_data['CGM'].where(mask, other=np.nan)
+
+            # Find sequences of non-missing CGM data and number them.
+            is_not_nan = patient_data['CGM'].notna()
+            starts = is_not_nan & (~is_not_nan.shift(1, fill_value=False))
+            patient_data['SequenceID'] = starts.cumsum() - 1
+            patient_data = patient_data[patient_data['CGM'].notna()]
+
+            ds = pd.concat([
+                ds, patient_data[[
+                    'PtID', 'DataDtTm', 'CGM', 'Insulin', 'SequenceID'
+                ]]
+            ])
+        self.dataset = ds
 
     def save_data(self):
         np.random.seed(42)
