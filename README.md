@@ -1,4 +1,4 @@
-# Glucose Predction Benchmark
+# Glucose Prediction Benchmark
 
 This benchmark provides methods to compare glucose prediction models across a set of high quality datasets.
 
