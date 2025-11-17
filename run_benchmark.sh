@@ -2,7 +2,7 @@
 
 # Default values
 models="gluformer"
-datasets="Anderson2016,Brown2019,Lynch2022"
+datasets="Anderson2016,Brown2019,Manchester2024,AZT1D"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do

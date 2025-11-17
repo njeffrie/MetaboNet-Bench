@@ -7,9 +7,9 @@ import matplotlib.pyplot as plt
 
 
 def load_dataset(name: str, split: str):
-    ds_path = f'data/{name}/dataset/{split}'
+    ds_path = f'data/{name}/{split}'
     ds = Dataset.load_from_disk(ds_path)
-    ds.set_format('torch')
+    ds.set_format('pandas')
     return ds
 
 
@@ -39,6 +39,7 @@ def plot_prediction_percentiles(predictions,
         save_path: optional path to save the plot
     """
     # Calculate percentiles across samples for each time point
+    print(f'predictions: {predictions.shape}, labels: {labels.shape}')
     pred_differences = predictions - labels
     label_percentiles = np.percentile(pred_differences, [10, 25, 75, 90],
                                       axis=0)
@@ -123,54 +124,57 @@ def main(dataset, model, plot, save_plot, split='test', subset_size=None):
     ds = load_dataset(dataset, split)
     if subset_size is not None:
         ds = ds.take(subset_size)
+    ds = ds.sort(['PtID', 'DataDtTm'])
     ds_len = len(ds)
     model_runner = get_model(model.lower())
     horizons = [3, 6, 9, 12]  # 15, 30, 45, 60 minutes.
 
-    rmses = np.zeros((ds_len, len(horizons)))
-    apes = np.zeros((ds_len, len(horizons)))
+    rmses = np.zeros((0, len(horizons)))
+    apes = np.zeros((0, len(horizons)))
 
     # Store all predictions and labels for plotting
     all_predictions = []
     all_labels = []
-
+    min_sequence_length = 192
     patient_ids = ds['PtID'].unique()
 
     i = 0
-    for patient_id in tqdm(patient_ids):
-        patient_data = ds[ds['PtID'] == patient_id]
-        timestamps = patient_data['DataDtTm']
-
-        # Calculate time differences between consecutive readings
-        timestamps_diff = timestamps.diff().dt.total_seconds(
-        ) / 60  # Convert to minutes
-
-        # Identify sequence breaks (gaps larger than max_gap_minutes)
-        # First row will have NaN time_diff, so we mark it as False (not a break)
-        sequence_breaks = timestamps_diff > max_gap_minutes
-        sequence_breaks.iloc[0] = False  # First reading starts a new sequence
-
-        # Create sequence IDs
-        sequence_ids = sequence_breaks.cumsum()
-
-        for sequence_id in sequence_ids.unique():
-            sequence_data = patient_data[sequence_ids == sequence_id]
+    for _, patient_data in tqdm(ds.to_pandas().groupby('PtID'), position=0):
+        for _, sequence_data in tqdm(patient_data.groupby('SequenceID'),
+                                     position=1,
+                                     leave=False):
             if len(sequence_data) < min_sequence_length:
                 continue
-            for i in range(0,
-                           len(sequence_data) - min_sequence_length + 1,
-                           12):  # increment by one hour.
-                model_input = sequence_data['CGM'].values[-192:-12]
-                label = sequence_data['CGM'].values[-12:].numpy()
-                pred = model_runner.predict(patient_id, timestamps, model_input)
+            for i in tqdm(range(0,
+                                len(sequence_data) - min_sequence_length + 1,
+                                12),
+                          position=2,
+                          leave=False):  # increment by one hour.
+                cgm_values = sequence_data['CGM'].values[i:i + 192]
+                timestamps = sequence_data['DataDtTm'].values[i:i + 180]
+                model_input = cgm_values[-192:-12]
+                label = cgm_values[-12:]
+                pred = model_runner.predict(sequence_data['PtID'].values[0],
+                                            timestamps, model_input)
                 pred = pred.flatten()
+                all_predictions.append(pred)
+                all_labels.append(label)
 
                 # Calculate metrics for each horizon
+                ape_list = np.array([])
+                rmses_list = np.array([])
                 for j in range(len(horizons)):
-                    rmses[i, j] = calculate_rmse(pred[horizons[j] - 1],
-                                                 label[horizons[j] - 1])
-                    apes[i, j] = calculate_ape(pred[horizons[j] - 1],
-                                               label[horizons[j] - 1])
+                    rmses_list = np.append(
+                        rmses_list,
+                        calculate_rmse(pred[horizons[j] - 1],
+                                       label[horizons[j] - 1]))
+                    ape_list = np.append(
+                        ape_list,
+                        calculate_ape(pred[horizons[j] - 1],
+                                      label[horizons[j] - 1]))
+                rmses = np.concatenate([rmses, rmses_list.reshape(1, -1)],
+                                       axis=0)
+                apes = np.concatenate([apes, ape_list.reshape(1, -1)], axis=0)
                 i += 1
 
     # Print results
@@ -186,6 +190,9 @@ def main(dataset, model, plot, save_plot, split='test', subset_size=None):
     if plot:
         all_predictions = np.array(all_predictions)
         all_labels = np.array(all_labels)
+
+        if save_plot is None:
+            save_plot = f'plots/{model}-{dataset}.png'
 
         print(f"\nGenerating prediction vs label plots...")
         plot_prediction_percentiles(all_predictions,

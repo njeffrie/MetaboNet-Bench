@@ -26,24 +26,16 @@ def preprocess(ds_dir):
     patients = set(cgm_data['DeidentID'].unique()) & set(
         insulin_data['DeidentID'].unique())
 
-    dataset_output = {'PtID': [], 'DataDtTm': [], 'CGM': [], 'Insulin': []}
+    dataset_output = pd.DataFrame()
     for patient in tqdm(patients):
         patient_cgm = cgm_data[cgm_data['DeidentID'] == patient]
         patient_insulin = insulin_data[insulin_data['DeidentID'] == patient]
 
-        for idx, sample in patient_cgm.iterrows():
-            dt = sample['LocalDtTm']
-            if dt not in insulin_datetimes:
-                continue
-            insulin_delivered = patient_insulin[
-                patient_insulin['LocalDeliveredDtTm'] ==
-                dt]['DeliveredValue'].values
-            insulin_delivered = round(insulin_delivered[0],
-                                      2) if len(insulin_delivered) > 0 else 0
-            dataset_output['PtID'].append(patient)
-            dataset_output['DataDtTm'].append(dt)
-            dataset_output['CGM'].append(sample['CGM'])
-            dataset_output['Insulin'].append(insulin_delivered)
+        patient_cgm = patient_cgm.rename(columns={'LocalDtTm': 'DataDtTm', 'DeidentID': 'PtID', 'CGM': 'CGM'})
+        patient_insulin = patient_insulin.rename(columns={'LocalDeliveredDtTm': 'DataDtTm', 'DeidentID': 'PtID', 'DeliveredValue': 'Insulin'})
 
-    dataset = pd.DataFrame(dataset_output)
-    return dataset
+        patient_cgm['DataDtTm'] = patient_cgm['DataDtTm'].dt.floor('5min')
+        patient_insulin['DataDtTm'] = patient_insulin['DataDtTm'].dt.floor('5min')
+        dataset_output = pd.concat([dataset_output, patient_cgm.merge(patient_insulin, how='outer')])
+
+    return dataset_output
