@@ -60,7 +60,7 @@ class DatsetPreprocessor:
                 limit=6,
                 limit_area='inside')
             mask = patient_data['CGM'].isna()
-            mask = mask.where(mask, other=np.nan)
+            mask = mask.where(mask, other=np.nan).infer_objects(copy=False)
             mask = mask.bfill(limit=6, limit_area='outside')
             mask = mask.isna()
             patient_data['CGM'] = patient_data['CGM'].where(mask, other=np.nan)

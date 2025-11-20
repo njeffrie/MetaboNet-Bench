@@ -49,8 +49,6 @@ def preprocess(ds_dir):
                                     how='outer').merge(bolus_data,
                                                        on='DataDtTm',
                                                        how='outer')
-        total_data['value'] = total_data['value'].interpolate(
-            method='linear', limit_direction='forward', limit=6).astype(float)
         total_data['basal_dose'] = total_data['basal_dose'].ffill().astype(
             float) / 12.0
         total_data['bolus_dose'] = total_data['bolus_dose'].fillna(

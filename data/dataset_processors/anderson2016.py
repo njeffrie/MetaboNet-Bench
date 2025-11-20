@@ -31,11 +31,23 @@ def preprocess(ds_dir):
         patient_cgm = cgm_data[cgm_data['DeidentID'] == patient]
         patient_insulin = insulin_data[insulin_data['DeidentID'] == patient]
 
-        patient_cgm = patient_cgm.rename(columns={'LocalDtTm': 'DataDtTm', 'DeidentID': 'PtID', 'CGM': 'CGM'})
-        patient_insulin = patient_insulin.rename(columns={'LocalDeliveredDtTm': 'DataDtTm', 'DeidentID': 'PtID', 'DeliveredValue': 'Insulin'})
+        patient_cgm = patient_cgm.rename(columns={
+            'LocalDtTm': 'DataDtTm',
+            'DeidentID': 'PtID',
+            'CGM': 'CGM'
+        })
+        patient_insulin = patient_insulin.rename(
+            columns={
+                'LocalDeliveredDtTm': 'DataDtTm',
+                'DeidentID': 'PtID',
+                'DeliveredValue': 'Insulin'
+            })
 
         patient_cgm['DataDtTm'] = patient_cgm['DataDtTm'].dt.floor('5min')
-        patient_insulin['DataDtTm'] = patient_insulin['DataDtTm'].dt.floor('5min')
-        dataset_output = pd.concat([dataset_output, patient_cgm.merge(patient_insulin, how='outer')])
+        patient_insulin['DataDtTm'] = patient_insulin['DataDtTm'].dt.floor(
+            '5min')
+        dataset_output = pd.concat(
+            [dataset_output,
+             patient_cgm.merge(patient_insulin, how='outer')])
 
     return dataset_output
