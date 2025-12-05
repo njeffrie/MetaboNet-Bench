@@ -3,6 +3,7 @@ import numpy as np
 from tqdm import tqdm
 
 
+# Preprocess the Brown 2019 dataset.
 def preprocess(ds_dir):
     cgm_data_file = f"{ds_dir}/Data Files/Pump_CGMGlucoseValue.txt"
     basal_data_file = f"{ds_dir}/Data Files/InsulinPumpSettings_a.txt"
@@ -10,134 +11,128 @@ def preprocess(ds_dir):
     bolus_data_file = f"{ds_dir}/Data Files/Pump_BolusDelivered.txt"
 
     # Load entire file at once, skipping the header
-    df = pd.read_csv(cgm_data_file,
-                     sep='|',
-                     dtype={
-                         'PtID': int,
-                         'CGMValue': float
-                     })
+    df = pd.read_csv(cgm_data_file, sep='|', dtype={'DataDtTm_adjusted': str})
+    df['PtID'] = df['PtID'].astype(int)
     df['CGM'] = pd.to_numeric(df['CGMValue'], errors='coerce')
     df['DataDtTm'] = pd.to_datetime(df['DataDtTm'],
                                     format='%Y-%m-%d %H:%M:%S',
                                     errors='coerce').dt.floor('5min')
 
-    dataset_output = {'PtID': [], 'DataDtTm': [], 'CGM': [], 'Insulin': []}
-    # Load insulin data if available
     basal_info = pd.read_csv(basal_data_file, sep='|', encoding='utf-16')
     basal_changes = pd.read_csv(basal_change_data_file,
                                 sep='|',
-                                dtype={
-                                    'PtID': int,
-                                    'CommandedBasalRate': float
-                                })
+                                dtype={'DataDtTm_adjusted': str})
     bolus_info = pd.read_csv(bolus_data_file, sep='|')
 
     # Align basal datetime information to the day.
-    assert 'InsTherapyDt' in basal_info.columns
-    basal_info['InsTherapyDt'] = pd.to_datetime(basal_info['InsTherapyDt'],
-                                                errors='coerce')
+    basal_info['InsTherapyDt'] = pd.to_datetime(basal_info['InsTherapyDt'])
     basal_info = basal_info.sort_values('InsTherapyDt').reset_index(drop=True)
     basal_info['InsTherapyDt'] = basal_info['InsTherapyDt'].dt.floor('D')
+    basal_info.rename(columns={'InsTherapyDt': 'DataDtTm'}, inplace=True)
 
     # Align basal change datetime information to the 5 minute interval.
-    assert 'DataDtTm' in basal_changes.columns
-    basal_changes['DataDtTm'] = pd.to_datetime(basal_changes['DataDtTm'],
-                                               errors='coerce')
+    basal_changes['DataDtTm'] = pd.to_datetime(basal_changes['DataDtTm'])
     basal_changes = basal_changes.sort_values('DataDtTm').reset_index(drop=True)
     basal_changes['DataDtTm'] = basal_changes['DataDtTm'].dt.floor('5min')
 
     # Align bolus datetime information to the 5 minute interval.
-    assert 'DataDtTm' in bolus_info.columns
-    bolus_info['DataDtTm'] = pd.to_datetime(bolus_info['DataDtTm'],
-                                            errors='coerce')
+    bolus_info['DataDtTm'] = pd.to_datetime(bolus_info['DataDtTm'])
     bolus_info = bolus_info.sort_values('DataDtTm').reset_index(drop=True)
     bolus_info['DataDtTm'] = bolus_info['DataDtTm'].dt.floor('5min')
 
+    dataset_output = pd.DataFrame()
     # Iterate only over patients present in CGM and all insulin-related datasets
     cgm_ids = set(df['PtID'].unique())
     basal_ids = set(basal_info['PtID'].unique())
     basal_change_ids = set(basal_changes['PtID'].unique())
     bolus_ids = set(bolus_info['PtID'].unique())
-    common_patient_ids = sorted(
-        list(cgm_ids & basal_ids & basal_change_ids & bolus_ids))
+    common_patient_ids = list(cgm_ids & basal_ids & basal_change_ids &
+                              bolus_ids)
     for patient_id in tqdm(common_patient_ids):
         patient_basal_info = basal_info[basal_info['PtID'] == patient_id]
         patient_basal_changes = basal_changes[basal_changes['PtID'] ==
                                               patient_id]
         patient_bolus_info = bolus_info[bolus_info['PtID'] == patient_id]
+        patient_cgm = df[(df['PtID'] == patient_id)]
         patient_basal_info = patient_basal_info[
             patient_basal_info['InsBasal0000'] != '']
-        starting_date = max(df['DataDtTm'].min(),
-                            patient_basal_info['InsTherapyDt'].min())
-        patient_cgm = df[(df['PtID'] == patient_id) &
-                         (df['DataDtTm'] >= starting_date)]
 
-        def get_basal_rate(basal_info, dt, current_basal=None):
-            if dt not in patient_basal_info['InsTherapyDt'].values:
-                if current_basal is not None:
-                    return current_basal
-                else:
-                    dt = basal_info['InsTherapyDt'].min()
+        # Limit the dataset to times where both basal and bolus data are available.
+        start_date = max(patient_bolus_info['DataDtTm'].min(),
+                         patient_basal_info['DataDtTm'].min())
+        end_date = patient_bolus_info['DataDtTm'].max()
 
-            # Get last pump profile before the given date.
-            basal_info = patient_basal_info[patient_basal_info['InsTherapyDt']
-                                            == dt]
-            key_list = [
-                f'InsBasal{dt.hour:02d}{dt.minute:02d}' for dt in pd.date_range(
-                    dt.date(), dt.date() + pd.Timedelta(hours=24), freq='30min')
-            ]
-            basal_rates = [basal_info[key].values[0] for key in key_list]
+        # Fill in all 5 minute intervals during the study period.
+        basal_times = pd.date_range(patient_basal_info['DataDtTm'].min(),
+                                    end_date,
+                                    freq='5min')
+        insulin_data = pd.DataFrame()
+        current_basal = None
+        for day in pd.date_range(basal_times.min().date(),
+                                 basal_times.max().date(),
+                                 freq='D'):
+            five_minute_increments = pd.date_range(day,
+                                                   day + pd.Timedelta(days=1),
+                                                   freq='5min')
+            if day in patient_basal_info['DataDtTm'].values:
+                basal_day = patient_basal_info[patient_basal_info['DataDtTm'] ==
+                                               day]
+                ha_increments = pd.date_range(day,
+                                              day + pd.Timedelta(days=1),
+                                              freq='30min')
+                key_list = [
+                    f'InsBasal{dt.hour:02d}{dt.minute:02d}'
+                    for dt in ha_increments
+                ]
+                current_basal = pd.DataFrame({
+                    'DataDtTm': ha_increments,
+                    'Insulin': [basal_day[key].values[0] for key in key_list]
+                })
+                current_basal = current_basal.merge(pd.DataFrame(
+                    {'DataDtTm': five_minute_increments}),
+                                                    on='DataDtTm',
+                                                    how='outer')
+                current_basal.ffill(inplace=True)
+            current_basal['DataDtTm'] = five_minute_increments
+            insulin_data = pd.concat([insulin_data, current_basal])
 
-            # Fill in rates across the day.
-            #print(basal_rates)
-            current_rate = basal_rates[0]
-            #print(current_rate)
-            for i in range(len(basal_rates)):
-                if basal_rates[i] is None or np.isnan(basal_rates[i]):
-                    basal_rates[i] = current_rate
-                else:
-                    current_rate = basal_rates[i]
+        patient_basal_changes = patient_basal_changes.drop_duplicates(
+            subset=['DataDtTm'])
+        patient_basal_changes.loc[:,
+                                  'CommandedBasalRate'] = patient_basal_changes[
+                                      'CommandedBasalRate'].values / 12.0
+        insulin_data.loc[:, 'Insulin'] = insulin_data['Insulin'].values / 12.0
+        insulin_data = insulin_data.sort_values('DataDtTm').reset_index(
+            drop=True)
 
-            rates = {'DataDtTm': [], 'Insulin': []}
-            for i, dt in enumerate(
-                    pd.date_range(dt.date(),
-                                  dt.date() + pd.Timedelta(hours=24),
-                                  freq='5min')):
-                current_rate = basal_rates[i // 6]
-                rates['DataDtTm'].append(dt.time())
-                rates['Insulin'].append(current_rate)
-            return pd.DataFrame(rates)
+        # Change basal rate from default when present in basal change data.
+        basal_changes_mask = insulin_data['DataDtTm'].isin(
+            patient_basal_changes['DataDtTm'])
+        patient_basal_changes = patient_basal_changes.merge(
+            insulin_data[['DataDtTm']], on='DataDtTm', how='right')
+        insulin_data.loc[
+            basal_changes_mask,
+            'Insulin'] = patient_basal_changes['CommandedBasalRate']
 
-        basal_rates = get_basal_rate(patient_basal_info, starting_date)
-        if basal_rates is None or basal_rates.iloc[0][
-                'Insulin'] is None or np.isnan(basal_rates.iloc[0]['Insulin']):
-            print(f'No basal rates found for patient {patient_id}')
-            continue
-        for idx, sample in tqdm(patient_cgm.iterrows(), total=len(patient_cgm)):
-            dt = sample['DataDtTm']
-            cgm = sample['CGM']
-            basal_rates = get_basal_rate(patient_basal_info, dt, basal_rates)
-            insulin_delivered = basal_rates[basal_rates['DataDtTm'] == dt.time(
-            )]['Insulin'].values[0] / 12.0
-            #print(f'base insulin {insulin_delivered}')
-            if dt in patient_basal_changes['DataDtTm'].unique():
-                insulin_delivered = patient_basal_changes[
-                    patient_basal_changes['DataDtTm'] ==
-                    dt]['CommandedBasalRate'].values[0] / 12.0
-                #print(f'after basal change {insulin_delivered}')
-            if dt in patient_bolus_info['DataDtTm'].unique():
-                bolus_delivered = patient_bolus_info[
-                    patient_bolus_info['DataDtTm'] ==
-                    dt]['BolusAmount'].values[0]
-                insulin_delivered += bolus_delivered
-                #print(f'after bolus {insulin_delivered}')
+        # Add bolus amount to insulin data.
+        bolus_mask = insulin_data['DataDtTm'].isin(
+            patient_bolus_info['DataDtTm'])
+        patient_bolus_info = patient_bolus_info.merge(insulin_data[['DataDtTm'
+                                                                   ]],
+                                                      on='DataDtTm',
+                                                      how='right')
+        insulin_data.loc[bolus_mask, 'Insulin'] = insulin_data[
+            'Insulin'] + patient_bolus_info['BolusAmount']
 
-            dataset_output['PtID'].append(patient_id)
-            dataset_output['DataDtTm'].append(dt)
-            dataset_output['CGM'].append(cgm)
-            dataset_output['Insulin'].append(insulin_delivered)
-
-    dataset = pd.DataFrame(dataset_output)
-
-    print(f"Successfully loaded {len(df)} CGM records")
-    return dataset
+        dataset_patient = pd.merge(patient_cgm,
+                                   insulin_data,
+                                   on='DataDtTm',
+                                   how='outer')
+        dataset_patient = dataset_patient[dataset_patient['DataDtTm'].between(
+            start_date, end_date)]
+        dataset_output = pd.concat([
+            dataset_output,
+            dataset_patient[['PtID', 'DataDtTm', 'CGM', 'Insulin']]
+        ])
+        dataset_output['PtID'] = dataset_output['PtID'].fillna(value=patient_id)
+    return dataset_output

@@ -37,12 +37,12 @@ class DatsetPreprocessor:
         patient_ids = self.dataset['PtID'].unique()
         ds = pd.DataFrame()
 
-        for patient_id in tqdm(patient_ids, position=0):
+        for patient_id in tqdm(patient_ids):
             # Get data for the specified patient.
             patient_data = self.dataset[self.dataset['PtID'] == patient_id]
             # Normalize the timestamp to 5 minute intervals.
-            patient_data['DataDtTm'].apply(lambda x: pd.to_datetime(x))
-            patient_data['DataDtTm'].apply(lambda x: x.floor('5min'))
+            patient_data['DataDtTm'].apply(
+                lambda x: pd.to_datetime(x).floor('5min'))
             start_time = patient_data['DataDtTm'].min()
             end_time = patient_data['DataDtTm'].max()
             sequence_times = pd.date_range(start_time, end_time, freq='5min')
