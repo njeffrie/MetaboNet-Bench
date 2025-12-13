@@ -6,9 +6,9 @@ import click
 import matplotlib.pyplot as plt
 
 
-def load_dataset(name: str, split: str):
-    ds_path = f'data/{name}/{split}'
-    ds = Dataset.load_from_disk(ds_path)
+def load_dataset():
+    ds_path = f'data/metabonet.parquet'
+    ds = Dataset.from_parquet(ds_path)
     ds.set_format('pandas')
     return ds
 
@@ -100,108 +100,114 @@ def plot_prediction_percentiles(predictions,
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Plot saved to {save_path}")
 
+def run_benchmark(model, ds, plot, csv_file=None):
+    model_runner = get_model(model.lower())
+    horizons = [3, 6, 9, 12]  # 15, 30, 45, 60 minutes.
+
+    min_sequence_length = 192
+
+    for _, selected_dataset in tqdm(ds.to_pandas().groupby('DatasetName'), position=0, leave=False):
+        ds_name = selected_dataset['DatasetName'].values[0]
+        patients_processed = 0
+
+        rmses = np.zeros((0, len(horizons)))
+        apes = np.zeros((0, len(horizons)))
+
+        # Store all predictions and labels for plotting
+        all_predictions = []
+        all_labels = []
+        for _, patient_data in tqdm(selected_dataset.groupby('PtID'), position=1, leave=False):
+            for _, sequence_data in tqdm(patient_data.groupby('SequenceID'),
+                                        position=1,
+                                        leave=False):
+                if len(sequence_data) < min_sequence_length:
+                    continue
+                for i in tqdm(range(0,
+                                    len(sequence_data) - min_sequence_length + 1,
+                                    12),
+                            position=2,
+                            leave=False):  # increment by one hour.
+                    cgm_values = sequence_data['CGM'].values[i:i + 192]
+                    timestamps = sequence_data['DataDtTm'].values[i:i + 180]
+                    model_input = cgm_values[-192:-12]
+                    label = cgm_values[-12:]
+                    pred = model_runner.predict(sequence_data['PtID'].values[0],
+                                                timestamps, model_input)
+                    pred = pred.flatten()
+                    all_predictions.append(pred)
+                    all_labels.append(label)
+
+                    # Calculate metrics for each horizon
+                    ape_list = np.array([])
+                    rmses_list = np.array([])
+                    for j in range(len(horizons)):
+                        rmses_list = np.append(
+                            rmses_list,
+                            calculate_rmse(pred[horizons[j] - 1],
+                                        label[horizons[j] - 1]))
+                        ape_list = np.append(
+                            ape_list,
+                            calculate_ape(pred[horizons[j] - 1],
+                                        label[horizons[j] - 1]))
+                    rmses = np.concatenate([rmses, rmses_list.reshape(1, -1)],
+                                        axis=0)
+                    apes = np.concatenate([apes, ape_list.reshape(1, -1)], axis=0)
+            patients_processed += 1
+            if patients_processed >= 5:
+                break
+
+        # Print results
+        print(
+            f'{model},{ds_name},{",".join([str(round(float(x), 2)) for x in list(np.mean(rmses, axis=0).round(2))])}'
+        )
+        print(
+            f'{model},{ds_name},{",".join([str(round(float(x), 2)) for x in list(np.mean(apes, axis=0).round(4) * 100)])}'
+        )
+        if csv_file is not None:
+            rmses_str = ",".join([str(round(float(x), 2)) for x in list(np.mean(rmses, axis=0).round(2))])
+            apes_str = ",".join([str(round(float(x), 2)) for x in list(np.mean(apes, axis=0).round(4) * 100)])
+            csv_file.write(f'{model},{ds_name},{rmses_str},{apes_str}\n')
+        # Generate plots if requested
+        if plot:
+            all_predictions = np.array(all_predictions)
+            all_labels = np.array(all_labels)
+
+            save_plot = f'plots/{model}-{dataset}.png'
+
+            print(f"\nGenerating prediction vs label plots...")
+            plot_prediction_percentiles(all_predictions,
+                                        all_labels,
+                                        np.round(np.mean(rmses, axis=0), 2),
+                                        np.round(100 * np.mean(apes, axis=0), 2),
+                                        dataset,
+                                        model,
+                                        save_path=save_plot)
 
 @click.command()
-@click.option('--dataset',
-              type=str,
-              default='Brown2019',
-              help='Dataset to run the benchmark on')
 @click.option('--model',
               type=str,
               default='gluformer',
-              help='Model to run the benchmark on')
+              help='List of models to run the benchmark on')
 @click.option('--subset_size',
               type=int,
               default=None,
               help='Subset size to run the benchmark on')
 @click.option('--plot', is_flag=True, help='Generate prediction vs label plots')
-@click.option(
-    '--save_plot',
-    type=str,
-    default=None,
-    help='Path to save the plot (e.g., "plots/gluformer_brown2019.png")')
-def main(dataset, model, plot, save_plot, split='test', subset_size=None):
-    ds = load_dataset(dataset, split)
+@click.option('--save_csv',
+              type=str,
+              default='results.csv',
+              help='Path to save the results (e.g., "results.csv")')
+def main(model, plot, save_csv, subset_size=None):
+    ds = load_dataset()
     if subset_size is not None:
         ds = ds.take(subset_size)
-    ds = ds.sort(['PtID', 'DataDtTm'])
-    ds_len = len(ds)
-    model_runner = get_model(model.lower())
-    horizons = [3, 6, 9, 12]  # 15, 30, 45, 60 minutes.
+    models = model.split(',')
+    csv_file = open(save_csv, 'w')
+    csv_file.write(f'model,dataset,rmse_15,rmse_30,rmse_45,rmse_60,ape_15,ape_30,ape_45,ape_60\n')
 
-    rmses = np.zeros((0, len(horizons)))
-    apes = np.zeros((0, len(horizons)))
+    for model in models:
+        run_benchmark(model, ds, plot, csv_file)
 
-    # Store all predictions and labels for plotting
-    all_predictions = []
-    all_labels = []
-    min_sequence_length = 192
-    patient_ids = ds['PtID'].unique()
-
-    i = 0
-    for _, patient_data in tqdm(ds.to_pandas().groupby('PtID'), position=0):
-        for _, sequence_data in tqdm(patient_data.groupby('SequenceID'),
-                                     position=1,
-                                     leave=False):
-            if len(sequence_data) < min_sequence_length:
-                continue
-            for i in tqdm(range(0,
-                                len(sequence_data) - min_sequence_length + 1,
-                                12),
-                          position=2,
-                          leave=False):  # increment by one hour.
-                cgm_values = sequence_data['CGM'].values[i:i + 192]
-                timestamps = sequence_data['DataDtTm'].values[i:i + 180]
-                model_input = cgm_values[-192:-12]
-                label = cgm_values[-12:]
-                pred = model_runner.predict(sequence_data['PtID'].values[0],
-                                            timestamps, model_input)
-                pred = pred.flatten()
-                all_predictions.append(pred)
-                all_labels.append(label)
-
-                # Calculate metrics for each horizon
-                ape_list = np.array([])
-                rmses_list = np.array([])
-                for j in range(len(horizons)):
-                    rmses_list = np.append(
-                        rmses_list,
-                        calculate_rmse(pred[horizons[j] - 1],
-                                       label[horizons[j] - 1]))
-                    ape_list = np.append(
-                        ape_list,
-                        calculate_ape(pred[horizons[j] - 1],
-                                      label[horizons[j] - 1]))
-                rmses = np.concatenate([rmses, rmses_list.reshape(1, -1)],
-                                       axis=0)
-                apes = np.concatenate([apes, ape_list.reshape(1, -1)], axis=0)
-                i += 1
-
-    # Print results
-    print(f'\nResults for {model} on {dataset}:')
-    print(
-        f'Root Mean Squared Error (RMSE) at 15/30/45/60 minutes: {np.mean(rmses, axis=0)}'
-    )
-    print(
-        f'Absolute Percent Error (APE) at 15/30/45/60 minutes: {np.mean(apes, axis=0)}'
-    )
-
-    # Generate plots if requested
-    if plot:
-        all_predictions = np.array(all_predictions)
-        all_labels = np.array(all_labels)
-
-        if save_plot is None:
-            save_plot = f'plots/{model}-{dataset}.png'
-
-        print(f"\nGenerating prediction vs label plots...")
-        plot_prediction_percentiles(all_predictions,
-                                    all_labels,
-                                    np.round(np.mean(rmses, axis=0), 2),
-                                    np.round(100 * np.mean(apes, axis=0), 2),
-                                    dataset,
-                                    model,
-                                    save_path=save_plot)
 
 
 if __name__ == "__main__":
