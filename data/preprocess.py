@@ -10,6 +10,7 @@ from dataset_processors import brown2019
 from dataset_processors import anderson2016
 from dataset_processors import azt1d
 from dataset_processors import manchester2024
+from dataset_processors import metabonet
 
 
 class DatsetPreprocessor:
@@ -19,19 +20,12 @@ class DatsetPreprocessor:
     Converts text files to prepared datasets for training and testing.
     """
 
-    def __init__(self, ds_name: str):
-        self.dataset_dir = ds_name
-        self.dataset = self.load_data(ds_name)
+    def __init__(self, ds_path: str):
+        self.dataset_path = ds_path
+        self.dataset = self.load_data()
 
-    def load_data(self, dataset_name: str):
-        if dataset_name == 'Anderson2016':
-            return anderson2016.preprocess(os.path.abspath(dataset_name))
-        if dataset_name == "Brown2019":
-            return brown2019.preprocess(os.path.abspath(dataset_name))
-        if dataset_name == "AZT1D":
-            return azt1d.preprocess(os.path.abspath(dataset_name))
-        if dataset_name == "Manchester2024":
-            return manchester2024.preprocess(os.path.abspath(dataset_name))
+    def load_data(self):
+        return metabonet.preprocess(self.dataset_path)
 
     def interpolate_data(self, max_gap_minutes: int = 30):
         patient_ids = self.dataset['PtID'].unique()
@@ -40,9 +34,6 @@ class DatsetPreprocessor:
         for patient_id in tqdm(patient_ids):
             # Get data for the specified patient.
             patient_data = self.dataset[self.dataset['PtID'] == patient_id]
-            # Normalize the timestamp to 5 minute intervals.
-            patient_data['DataDtTm'].apply(
-                lambda x: pd.to_datetime(x).floor('5min'))
             start_time = patient_data['DataDtTm'].min()
             end_time = patient_data['DataDtTm'].max()
             sequence_times = pd.date_range(start_time, end_time, freq='5min')
@@ -73,21 +64,13 @@ class DatsetPreprocessor:
 
             ds = pd.concat([
                 ds, patient_data[[
-                    'PtID', 'DataDtTm', 'CGM', 'Insulin', 'SequenceID'
+                    'PtID', 'DataDtTm', 'CGM', 'Insulin', 'SequenceID', 'DatasetName'
                 ]]
             ])
         self.dataset = ds
 
     def save_data(self):
-        np.random.seed(42)
-        patient_ids = sorted(list(self.dataset['PtID'].unique()))
-        np.random.shuffle(patient_ids)
-        ds_train = Dataset.from_pandas(self.dataset[self.dataset['PtID'].isin(
-            patient_ids[:int(len(patient_ids) * 0.9)])])
-        ds_test = Dataset.from_pandas(self.dataset[self.dataset['PtID'].isin(
-            patient_ids[int(len(patient_ids) * 0.9):])])
-        ds_train.save_to_disk(f'{self.dataset_dir}/train')
-        ds_test.save_to_disk(f'{self.dataset_dir}/test')
+        self.dataset.to_parquet(self.dataset_path)
 
 
 def extract_zipfile(ds_name):
@@ -104,14 +87,15 @@ def extract_zipfile(ds_name):
 @click.option('--force',
               is_flag=True,
               help='Force re-download and preprocess the dataset')
-def main(force: bool = False):
-    for ds in ["Manchester2024", "AZT1D", "Anderson2016", "Brown2019"]:
-        if not os.path.exists(ds) or force:
-            extract_zipfile(ds)
-        cgm_dataset = DatsetPreprocessor(ds)
-        cgm_dataset.interpolate_data()
-        cgm_dataset.save_data()
-        print(f"Preprocessed {ds} dataset")
+@click.option('--path_to_dataset',
+              type=str,
+              default='metabonet_public_2025.parquet',
+              help='Path to the dataset to preprocess')
+def main(force: bool = False, path_to_dataset: str = 'metabonet_public_2025.parquet'):
+    cgm_dataset = DatsetPreprocessor(path_to_dataset)
+    cgm_dataset.interpolate_data()
+    cgm_dataset.save_data()
+    print(f"Preprocessed {path_to_dataset} dataset")
 
 
 if __name__ == "__main__":
