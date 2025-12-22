@@ -6,10 +6,6 @@ import numpy as np
 import zipfile
 import click
 import dataset_info
-from dataset_processors import brown2019
-from dataset_processors import anderson2016
-from dataset_processors import azt1d
-from dataset_processors import manchester2024
 from dataset_processors import metabonet
 
 
@@ -31,6 +27,7 @@ class DatsetPreprocessor:
         patient_ids = self.dataset['PtID'].unique()
         ds = pd.DataFrame()
 
+        sequence_id = 0
         for patient_id in tqdm(patient_ids):
             # Get data for the specified patient.
             patient_data = self.dataset[self.dataset['PtID'] == patient_id]
@@ -42,6 +39,7 @@ class DatsetPreprocessor:
                 on='DataDtTm',
                 how='outer').sort_values('DataDtTm').reset_index(drop=True)
             patient_data['Insulin'] = patient_data['Insulin'].fillna(value=0.0)
+            patient_data['Carbs'] = patient_data['Carbs'].fillna(value=0.0)
             patient_data['PtID'] = patient_data['PtID'].ffill()
 
             # Interpolate CGM but only keep sub-30 minute gaps bookended by valid data.
@@ -59,28 +57,25 @@ class DatsetPreprocessor:
             # Find sequences of non-missing CGM data and number them.
             is_not_nan = patient_data['CGM'].notna()
             starts = is_not_nan & (~is_not_nan.shift(1, fill_value=False))
-            patient_data['SequenceID'] = starts.cumsum() - 1
+            patient_data['SequenceID'] = starts.cumsum() - 1 + sequence_id
+
+            sequence_id = patient_data['SequenceID'].max()
             patient_data = patient_data[patient_data['CGM'].notna()]
 
             ds = pd.concat([
                 ds, patient_data[[
-                    'PtID', 'DataDtTm', 'CGM', 'Insulin', 'SequenceID', 'DatasetName'
+                    'PtID', 'DataDtTm', 'CGM', 'Insulin', 'Carbs', 'SequenceID', 'DatasetName'
                 ]]
             ])
         self.dataset = ds
 
     def save_data(self):
-        self.dataset.to_parquet(self.dataset_path)
-
-
-def extract_zipfile(ds_name):
-    os.makedirs(ds_name, exist_ok=True)
-    data_dir = f'{os.path.dirname(os.path.realpath(__file__))}/downloads'
-    dataset_source_path = f'{data_dir}/{dataset_info.dataset_names_map[ds_name]}'
-    assert os.path.exists(
-        dataset_source_path), f"Zip file not found: {dataset_source_path}"
-    with zipfile.ZipFile(dataset_source_path, 'r') as zip_src:
-        zip_src.extractall(ds_name)
+        self.dataset.df.to_parquet(
+    'metabonet.parquet',
+    engine="pyarrow",
+    compression="zstd",
+    index=False
+)
 
 
 @click.command()
