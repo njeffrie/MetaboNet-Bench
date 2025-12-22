@@ -131,8 +131,9 @@ def run_benchmark(model, ds, plot, csv_file=None):
                     timestamps = sequence_data['DataDtTm'].values[i:i + 180]
                     model_input = cgm_values[-192:-12]
                     label = cgm_values[-12:]
-                    pred = model_runner.predict(sequence_data['PtID'].values[0],
-                                                timestamps, model_input)
+                    insulin_values = sequence_data['Insulin'].values[i:i + 192]
+                    carbs_values = sequence_data['Carbs'].values[i:i + 192]
+                    pred = model_runner.predict(timestamps, model_input, insulin_values, carbs_values)
                     pred = pred.flatten()
                     all_predictions.append(pred)
                     all_labels.append(label)
