@@ -114,7 +114,6 @@ class GlucoseDecoderModel:
 
         prediction_steps = ph//5
         cgm = torch.cat([cgm, torch.zeros([1, prediction_steps], dtype=torch.float32)], dim=1)
-        #print(f'ts shape: {ts.shape}, insulin shape: {insulin.shape}, carbs shape: {carbs.shape}, cgm shape: {cgm.shape}')
         tf = self._time_features(ts)  # (B, T, 4)
 
         x = torch.cat([
@@ -126,9 +125,9 @@ class GlucoseDecoderModel:
         x = x.to(torch.float32)
         T = 144 # 12 hours in 5-minute increments
         if x.shape[1] > T:
-            x = x[:, -T-ph:, :]
+            x = x[:, -T-prediction_steps:, :]
         with torch.no_grad():
-            for h in range(ph):
-                pred = self.model(x[:,:-ph+h])
-                x[:,-ph+h+1,0] = pred[:,-1]
-        return self.preprocessor.unnormalize(x[:,-ph:,0].squeeze().detach().numpy())
+            for h in range(prediction_steps):
+                delta = self.model(x[:,:-prediction_steps+h])
+                x[:,-prediction_steps+h,0] = x[:,-prediction_steps+h-1,0] + delta[:,-1]
+        return self.preprocessor.unnormalize(x[:,-prediction_steps:,0].squeeze().detach().numpy())
