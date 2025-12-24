@@ -70,12 +70,11 @@ class DatsetPreprocessor:
         self.dataset = ds
 
     def save_data(self):
-        self.dataset.df.to_parquet(
-    'metabonet.parquet',
-    engine="pyarrow",
-    compression="zstd",
-    index=False
-)
+        self.dataset.to_parquet(
+        'metabonet.parquet',
+        engine="pyarrow",
+        compression="zstd",
+        index=False)
 
 
 @click.command()

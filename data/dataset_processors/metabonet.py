@@ -12,7 +12,7 @@ def preprocess(ds_path: str):
     Returns:
         DataFrame with columns: PtID, DataDtTm, CGM, Insulin
     """
-    df = pd.read_parquet(ds_path, columns = ['CGM', 'insulin', 'carbs','id', 'date', 'source_file'])
+    df = pd.read_parquet(ds_path, columns = ['CGM', 'insulin', 'carbs', 'id', 'date', 'source_file', 'insulin_delivery_device'])
     df = df.rename(columns = {'id': 'PtID', 'date': 'DataDtTm', 'insulin': 'Insulin', 'carbs': 'Carbs', 'source_file': 'DatasetName'})
     df = df[df['DataDtTm'].notna()]
 
@@ -23,6 +23,8 @@ def preprocess(ds_path: str):
     df['PtID'] = pd.to_numeric(df['PtID'], errors='coerce')
     df['Carbs'] = pd.to_numeric(df['Carbs'], errors='coerce')
     df = df[df['PtID'].notna()]
+    df = df[df['insulin_delivery_device'] != 'Multiple Daily Injections']
+    df['Carbs'] = df['Carbs'].clip(lower=0.0, upper=200.0)
 
     # Combine source dataset and user ID to generate truly unique patient IDs.
     df = df.sort_values(['DatasetName', 'PtID']).reset_index(drop=True)
