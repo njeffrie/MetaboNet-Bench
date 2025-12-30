@@ -106,6 +106,8 @@ def run_benchmark(model, ds, plot, csv_file=None):
 
     min_sequence_length = 192
 
+    total_rmses = np.zeros((0, len(horizons)))
+    total_apes = np.zeros((0, len(horizons)))
     for _, selected_dataset in tqdm(ds.to_pandas().groupby('DatasetName'), position=0, leave=False):
         ds_name = selected_dataset['DatasetName'].values[0]
         patients_processed = 0
@@ -164,6 +166,8 @@ def run_benchmark(model, ds, plot, csv_file=None):
         print(
             f'{model},{ds_name},{",".join([str(round(float(x), 2)) for x in list(np.mean(apes, axis=0).round(4) * 100)])}'
         )
+        total_rmses = np.concatenate([total_rmses, rmses], axis=0)
+        total_apes = np.concatenate([total_apes, apes], axis=0)
         if csv_file is not None:
             rmses_str = ",".join([str(round(float(x), 2)) for x in list(np.mean(rmses, axis=0).round(2))])
             apes_str = ",".join([str(round(float(x), 2)) for x in list(np.mean(apes, axis=0).round(4) * 100)])
@@ -183,6 +187,8 @@ def run_benchmark(model, ds, plot, csv_file=None):
                                         dataset,
                                         model,
                                         save_path=save_plot)
+    print(f'Total RMSE: {np.mean(total_rmses, axis=0).round(2)}')
+    print(f'Total APE: {np.mean(total_apes, axis=0).round(4) * 100}')
 
 @click.command()
 @click.option('--model',
