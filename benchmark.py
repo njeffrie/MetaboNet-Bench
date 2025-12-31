@@ -41,7 +41,7 @@ def plot_prediction_percentiles(predictions,
     # Calculate percentiles across samples for each time point
     print(f'predictions: {predictions.shape}, labels: {labels.shape}')
     pred_differences = predictions - labels
-    label_percentiles = np.percentile(pred_differences, [10, 25, 75, 90],
+    label_percentiles = np.percentile(pred_differences, [10, 25, 50, 75, 90],
                                       axis=0)
 
     # Time points (assuming 5-minute intervals)
@@ -53,18 +53,18 @@ def plot_prediction_percentiles(predictions,
     # Subplot 1: Percentiles
     ax1.fill_between(time_points,
                      label_percentiles[0],
-                     label_percentiles[3],
+                     label_percentiles[4],
                      alpha=0.3,
                      color='blue',
                      label='Predictions 10th-90th percentile')
     ax1.fill_between(time_points,
                      label_percentiles[1],
-                     label_percentiles[2],
+                     label_percentiles[3],
                      alpha=0.5,
                      color='blue',
                      label='Predictions 25th-75th percentile')
     ax1.plot(time_points,
-             label_percentiles[1],
+             label_percentiles[2],
              'b-',
              linewidth=2,
              label='Predictions median')
