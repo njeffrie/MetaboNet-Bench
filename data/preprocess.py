@@ -70,8 +70,9 @@ class DatsetPreprocessor:
         self.dataset = ds
 
     def save_data(self):
+        split = 'test' if 'test' in self.dataset_path else 'train'
         self.dataset.to_parquet(
-        'metabonet.parquet',
+        f'metabonet_{split}.parquet',
         engine="pyarrow",
         compression="zstd",
         index=False)
@@ -83,9 +84,9 @@ class DatsetPreprocessor:
               help='Force re-download and preprocess the dataset')
 @click.option('--path_to_dataset',
               type=str,
-              default='metabonet_public_2025.parquet',
+              default='metabonet_public_test.parquet',
               help='Path to the dataset to preprocess')
-def main(force: bool = False, path_to_dataset: str = 'metabonet_public_2025.parquet'):
+def main(force: bool = False, path_to_dataset: str = 'metabonet_public_test.parquet'):
     cgm_dataset = DatsetPreprocessor(path_to_dataset)
     cgm_dataset.interpolate_data()
     cgm_dataset.save_data()

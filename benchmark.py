@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 
 def load_dataset():
-    ds_path = f'data/metabonet.parquet'
+    ds_path = f'data/metabonet_test.parquet'
     ds = Dataset.from_parquet(ds_path)
     ds.set_format('pandas')
     return ds
@@ -108,9 +108,8 @@ def run_benchmark(model, ds, plot, csv_file=None):
 
     total_rmses = np.zeros((0, len(horizons)))
     total_apes = np.zeros((0, len(horizons)))
-    for _, selected_dataset in tqdm(ds.to_pandas().groupby('DatasetName'), position=0, leave=False):
+    for _, selected_dataset in ds.to_pandas().groupby('DatasetName'):
         ds_name = selected_dataset['DatasetName'].values[0]
-        patients_processed = 0
 
         rmses = np.zeros((0, len(horizons)))
         apes = np.zeros((0, len(horizons)))
@@ -118,7 +117,7 @@ def run_benchmark(model, ds, plot, csv_file=None):
         # Store all predictions and labels for plotting
         all_predictions = []
         all_labels = []
-        for _, patient_data in tqdm(selected_dataset.groupby('PtID'), position=1, leave=False):
+        for _, patient_data in tqdm(selected_dataset.groupby('PtID'), position=0, leave=False):
             for _, sequence_data in tqdm(patient_data.groupby('SequenceID'),
                                         position=1,
                                         leave=False):
@@ -155,9 +154,6 @@ def run_benchmark(model, ds, plot, csv_file=None):
                     rmses = np.concatenate([rmses, rmses_list.reshape(1, -1)],
                                         axis=0)
                     apes = np.concatenate([apes, ape_list.reshape(1, -1)], axis=0)
-            patients_processed += 1
-            if patients_processed >= 5:
-                break
 
         # Print results
         print(
