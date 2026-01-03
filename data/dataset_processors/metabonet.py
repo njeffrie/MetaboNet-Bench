@@ -26,10 +26,6 @@ def preprocess(ds_path: str):
     df = df[df['insulin_delivery_device'] != 'Multiple Daily Injections']
     df['Carbs'] = df['Carbs'].clip(lower=0.0, upper=200.0)
 
-    # Combine source dataset and user ID to generate truly unique patient IDs.
-    df = df.sort_values(['DatasetName', 'PtID']).reset_index(drop=True)
-    df['PtID']= df['PtID'].diff().ne(0).cumsum()
-
-    df = df.sort_values(['PtID', 'DataDtTm'])
+    df = df.sort_values(['DatasetName', 'PtID', 'DataDtTm'])
     df = df.reset_index(drop=True)
     return df[['PtID', 'DataDtTm', 'CGM', 'Insulin', 'Carbs','DatasetName']]
