@@ -106,17 +106,13 @@ def run_benchmark(model, ds, plot, csv_file=None):
 
     min_sequence_length = 192
 
-    total_rmses = np.zeros((0, len(horizons)))
-    total_apes = np.zeros((0, len(horizons)))
+    total_predictions = np.zeros((0, len(horizons)))
+    total_labels = np.zeros((0, len(horizons)))
     for _, selected_dataset in ds.to_pandas().groupby('DatasetName'):
         ds_name = selected_dataset['DatasetName'].values[0]
 
-        rmses = np.zeros((0, len(horizons)))
-        apes = np.zeros((0, len(horizons)))
-
-        # Store all predictions and labels for plotting
-        all_predictions = []
-        all_labels = []
+        all_predictions = np.zeros((0, len(horizons)))
+        all_labels = np.zeros((0, len(horizons)))
         for _, patient_data in tqdm(selected_dataset.groupby('PtID'), position=0, leave=False):
             for _, sequence_data in tqdm(patient_data.groupby('SequenceID'),
                                         position=1,
@@ -134,57 +130,43 @@ def run_benchmark(model, ds, plot, csv_file=None):
                     label = cgm_values[-12:]
                     insulin_values = sequence_data['Insulin'].values[i:i + 192]
                     carbs_values = sequence_data['Carbs'].values[i:i + 192]
-                    pred = model_runner.predict(timestamps, model_input, insulin_values, carbs_values)
-                    pred = pred.flatten()
-                    all_predictions.append(pred)
-                    all_labels.append(label)
+                    pred = model_runner.predict(timestamps, model_input, insulin_values, carbs_values).flatten()
+                    preds = pred[np.array(horizons)-1]
+                    labels = label[np.array(horizons)-1]
+                    all_predictions = np.concatenate([all_predictions, preds.reshape(-1, len(horizons))], axis=0)
+                    all_labels = np.concatenate([all_labels, labels.reshape(-1, len(horizons))], axis=0)
 
-                    # Calculate metrics for each horizon
-                    ape_list = np.array([])
-                    rmses_list = np.array([])
-                    for j in range(len(horizons)):
-                        rmses_list = np.append(
-                            rmses_list,
-                            calculate_rmse(pred[horizons[j] - 1],
-                                        label[horizons[j] - 1]))
-                        ape_list = np.append(
-                            ape_list,
-                            calculate_ape(pred[horizons[j] - 1],
-                                        label[horizons[j] - 1]))
-                    rmses = np.concatenate([rmses, rmses_list.reshape(1, -1)],
-                                        axis=0)
-                    apes = np.concatenate([apes, ape_list.reshape(1, -1)], axis=0)
-
+        rmses = np.sqrt(np.mean((all_labels - all_predictions)**2, axis=0))
+        apes = np.mean(np.abs(all_labels - all_predictions) / np.abs(all_labels), axis=0)
         # Print results
         print(
-            f'{model},{ds_name},{",".join([str(round(float(x), 2)) for x in list(np.mean(rmses, axis=0).round(2))])}'
+            f'{model},{ds_name},{",".join([str(round(float(x), 2)) for x in list(rmses.round(2))])}'
         )
         print(
-            f'{model},{ds_name},{",".join([str(round(float(x), 2)) for x in list(np.mean(apes, axis=0).round(4) * 100)])}'
+            f'{model},{ds_name},{",".join([str(round(float(x), 2)) for x in list(apes.round(4) * 100)])}'
         )
-        total_rmses = np.concatenate([total_rmses, rmses], axis=0)
-        total_apes = np.concatenate([total_apes, apes], axis=0)
+        total_predictions = np.concatenate([total_predictions, all_predictions], axis=0)
+        total_labels = np.concatenate([total_labels, all_labels], axis=0)
         if csv_file is not None:
-            rmses_str = ",".join([str(round(float(x), 2)) for x in list(np.mean(rmses, axis=0).round(2))])
-            apes_str = ",".join([str(round(float(x), 2)) for x in list(np.mean(apes, axis=0).round(4) * 100)])
-            csv_file.write(f'{model},{ds_name},{rmses_str},{apes_str}\n')
+            predictions_str = ",".join([str(round(float(x), 2)) for x in list(rmses.round(2))])
+            labels_str = ",".join([str(round(float(x), 2)) for x in list(apes.round(2))])
+            csv_file.write(f'{model},{ds_name},{predictions_str},{labels_str}\n')
         # Generate plots if requested
         if plot:
-            all_predictions = np.array(all_predictions)
-            all_labels = np.array(all_labels)
-
             save_plot = f'plots/{model}-{dataset}.png'
 
             print(f"\nGenerating prediction vs label plots...")
-            plot_prediction_percentiles(all_predictions,
-                                        all_labels,
-                                        np.round(np.mean(rmses, axis=0), 2),
-                                        np.round(100 * np.mean(apes, axis=0), 2),
+            plot_prediction_percentiles(total_predictions,
+                                        total_labels,
+                                        rmses,
+                                        apes,
                                         dataset,
                                         model,
                                         save_path=save_plot)
-    print(f'Total RMSE: {np.mean(total_rmses, axis=0).round(2)}')
-    print(f'Total APE: {np.mean(total_apes, axis=0).round(4) * 100}')
+    total_rmses = np.sqrt(np.mean((total_labels - total_predictions)**2, axis=0))
+    total_apes = np.mean(np.abs(total_labels - total_predictions) / np.abs(total_labels), axis=0)
+    print(f'Total RMSE: {total_rmses}')
+    print(f'Total APE: {total_apes}')
 
 @click.command()
 @click.option('--model',
