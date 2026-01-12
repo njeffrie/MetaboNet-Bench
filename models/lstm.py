@@ -16,10 +16,10 @@ class LSTM:
         self.model.eval()
 
     def predict(self, timestamps, cgm, insulin, carbs):
-        if len(cgm) < self.config.len_seq:
+        if cgm.shape[1] < self.config.len_seq:
             print(f'cgm length {len(cgm)} is less than config.len_seq {self.config.len_seq}')
-        assert(len(cgm) >= self.config.len_seq)
-        glucose = cgm[-self.config.len_seq:]
+        assert(cgm.shape[1] >= self.config.len_seq)
+        glucose = cgm[:, -self.config.len_seq:]
         with torch.no_grad():
             pred = self.model(glucose)
         return pred.numpy()

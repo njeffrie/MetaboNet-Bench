@@ -10,6 +10,7 @@ class LinearRegression:
 
     def predict(self, timestamps, cgm, insulin, carbs):
         # Get the last lookback_window intervals of glucose data
-        past_glucose = cgm[[-self.lookback_window-1, -1]]
-        slope = (past_glucose[1] - past_glucose[0]) / self.lookback_window
-        return np.array([past_glucose[1] + slope * i for i in range(12)])
+        past_glucose = cgm[:, [-self.lookback_window-1, -1]]
+        slope = (past_glucose[:, 1] - past_glucose[:, 0]) / self.lookback_window
+        changes = np.repeat(np.arange(1, 13).reshape(1, -1), cgm.shape[0], axis=0) * slope.reshape(-1, 1)
+        return past_glucose[:,1].reshape(-1, 1) + changes

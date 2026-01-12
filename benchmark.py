@@ -100,7 +100,16 @@ def plot_prediction_percentiles(predictions,
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Plot saved to {save_path}")
 
-def run_benchmark(model, ds, plot, csv_file=None):
+def run_batch(model_runner, input_batch, label_batch, horizons):
+    input_batch = np.stack(input_batch, axis=0)
+    label_batch = np.stack(label_batch, axis=0)
+    ts, cgm, insulin, carbs = np.split(input_batch, 4, axis=1)
+    pred = model_runner.predict(ts.squeeze(1), cgm.squeeze(1), insulin.squeeze(1), carbs.squeeze(1))
+    preds = pred[:, np.array(horizons)-1]
+    labels = label_batch[:,np.array(horizons)-1]
+    return preds, labels
+
+def run_benchmark(model, ds, plot, csv_file=None, batch_size=1024):
     model_runner = get_model(model.lower())
     horizons = [3, 6, 9, 12]  # 15, 30, 45, 60 minutes.
 
@@ -113,6 +122,8 @@ def run_benchmark(model, ds, plot, csv_file=None):
 
         all_predictions = np.zeros((0, len(horizons)))
         all_labels = np.zeros((0, len(horizons)))
+        input_batch = []
+        label_batch = []
         for _, patient_data in tqdm(selected_dataset.groupby('PtID'), position=0, leave=False):
             for _, sequence_data in tqdm(patient_data.groupby('SequenceID'),
                                         position=1,
@@ -125,16 +136,24 @@ def run_benchmark(model, ds, plot, csv_file=None):
                             position=2,
                             leave=False):  # increment by one hour.
                     cgm_values = sequence_data['CGM'].values[i:i + 192]
-                    timestamps = sequence_data['DataDtTm'].values[i:i + 180]
+                    timestamps = sequence_data['DataDtTm'].values[i:i + 180].astype(np.int64)
                     model_input = cgm_values[-192:-12]
                     label = cgm_values[-12:]
-                    insulin_values = sequence_data['Insulin'].values[i:i + 192]
-                    carbs_values = sequence_data['Carbs'].values[i:i + 192]
-                    pred = model_runner.predict(timestamps, model_input, insulin_values, carbs_values).flatten()
-                    preds = pred[np.array(horizons)-1]
-                    labels = label[np.array(horizons)-1]
-                    all_predictions = np.concatenate([all_predictions, preds.reshape(-1, len(horizons))], axis=0)
-                    all_labels = np.concatenate([all_labels, labels.reshape(-1, len(horizons))], axis=0)
+                    insulin_values = sequence_data['Insulin'].values[i:i + 180]
+                    carbs_values = sequence_data['Carbs'].values[i:i + 180]
+                    input_batch.append(np.stack([timestamps, model_input, insulin_values, carbs_values], axis=0))
+                    label_batch.append(label)
+                    if len(input_batch) == batch_size:
+                        preds, labels = run_batch(model_runner, input_batch, label_batch, horizons)
+                        all_predictions = np.concatenate([all_predictions, preds], axis=0)
+                        all_labels = np.concatenate([all_labels, labels], axis=0)
+                        input_batch = []
+                        label_batch = []
+
+        if len(input_batch) > 0:
+            preds, labels = run_batch(model_runner, input_batch, label_batch, horizons)
+            all_predictions = np.concatenate([all_predictions, preds], axis=0)
+            all_labels = np.concatenate([all_labels, labels], axis=0)
 
         rmses = np.sqrt(np.mean((all_labels - all_predictions)**2, axis=0))
         apes = np.mean(np.abs(all_labels - all_predictions) / np.abs(all_labels), axis=0)
@@ -165,8 +184,8 @@ def run_benchmark(model, ds, plot, csv_file=None):
                                         save_path=save_plot)
     total_rmses = np.sqrt(np.mean((total_labels - total_predictions)**2, axis=0))
     total_apes = np.mean(np.abs(total_labels - total_predictions) / np.abs(total_labels), axis=0)
-    print(f'Total RMSE: {total_rmses}')
-    print(f'Total APE: {total_apes}')
+    print(f'Total RMSE: {total_rmses.round(2)}')
+    print(f'Total APE: {total_apes.round(4)}')
 
 @click.command()
 @click.option('--model',
