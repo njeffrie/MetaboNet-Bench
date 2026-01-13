@@ -14,12 +14,10 @@ class Gluformer:
         self.model.eval()
 
     def predict(self, timestamps, cgm, insulin, carbs):
+        timestamps = pd.to_datetime(list(timestamps.flatten()))
         subject_id = 0
-        if len(cgm) < self.config.len_seq:
-            print(f'cgm length {len(cgm)} is less than config.len_seq {self.config.len_seq}')
-        assert(len(cgm) >= self.config.len_seq)
-        glucose = cgm[-self.config.len_seq:]
-        timestamps = [pd.to_datetime(date) for date in timestamps[-self.config.len_seq:]]
+        assert(cgm.shape[1] >= self.config.len_seq)
+        glucose = cgm[:, -self.config.len_seq:]
         with torch.no_grad():
             pred, log_var = self.model(subject_id, timestamps, glucose)
-        return pred.numpy()
+        return pred.squeeze(-1).numpy()

@@ -12,93 +12,116 @@ def load_dataset():
     ds.set_format('pandas')
     return ds
 
+def dts_zone_counts(labels,
+                    predictions,
+                    dts_grid_path,
+                    extent=(-62, 835, -47, 646)):
+    # Pre-calculated RGB values for each DTS zone.
+    zone_rgb = {
+        'A': np.array([0.5647059, 0.72156864, 0.5019608], dtype=np.float32),
+        'B': np.array([1.0039216, 1.0039216, 0.59607846], dtype=np.float32),
+        'C': np.array([0.972549, 0.8156863, 0.5647059], dtype=np.float32),
+        'D': np.array([0.9411765, 0.53333336, 0.5019608], dtype=np.float32),
+        'E': np.array([0.78431374, 0.53333336, 0.65882355], dtype=np.float32),
+    }
+    r, p = map(lambda x: np.asarray(x).ravel(), (labels, predictions))
 
-def calculate_rmse(pred, label):
-    return np.sqrt(np.mean((pred - label)**2))
+    img = plt.imread(dts_grid_path).astype(np.float32)
+    h, w = img.shape[:2]
+    xmin, xmax, ymin, ymax = extent
 
+    xi = np.round((r - xmin) / (xmax - xmin) * (w - 1)).astype(int)
+    yi = np.round((ymax - p) / (ymax - ymin) * (h - 1)).astype(int)
+    pix = img[yi, xi, :3]
 
-def calculate_ape(pred, label):
-    return np.mean(np.abs(pred - label) / np.abs(label))
+    keys = np.array(list(zone_rgb), dtype='<U1')
+    cols = np.stack([zone_rgb[k] for k in keys], axis=0)
+    z = keys[np.argmin(((pix[:, None] - cols)**2).sum(-1), axis=1)]
 
+    return {k: int((z == k).sum()) for k in 'ABCDE'}
 
 def plot_prediction_percentiles(predictions,
                                 labels,
-                                rmse,
-                                ape,
                                 dataset_name,
                                 model_name,
-                                save_path=None):
-    """
-    Plot percentiles of predictions vs labels throughout the prediction window.
-    
-    Args:
-        predictions: numpy array of shape (n_samples, prediction_length)
-        labels: numpy array of shape (n_samples, prediction_length)
-        dataset_name: name of the dataset for the plot title
-        model_name: name of the model for the plot title
-        save_path: optional path to save the plot
-    """
-    # Calculate percentiles across samples for each time point
-    print(f'predictions: {predictions.shape}, labels: {labels.shape}')
-    pred_differences = predictions - labels
-    label_percentiles = np.percentile(pred_differences, [10, 25, 50, 75, 90],
-                                      axis=0)
+                                save_path=None,
+                                dts_grid_path='data/dts_grid.png',
+                                plot_subset_size=None):
+    ph_index = 1
+    zone_counts = dts_zone_counts(labels[:, ph_index], predictions[:, ph_index], dts_grid_path)
+    total_samples = len(labels)
+    if plot_subset_size is not None:
+        predictions = predictions[-plot_subset_size:, :]
+        labels = labels[-plot_subset_size:, :]
+    r, p = map(lambda x: np.asarray(x).ravel(), (labels[:, ph_index], predictions[:, ph_index]))
+    plt.figure(figsize=(10, 7.5), dpi=150)
+    plt.imshow(
+        plt.imread(dts_grid_path),
+        extent=(-62, 835, -47, 646),
+        origin='upper',
+        aspect='auto',
+    )
+    plt.scatter(
+        r,
+        p,
+        s=6,
+        facecolors='white',
+        edgecolors='black',
+        linewidths=0.4,
+    )
+    plt.axis('off')
+    zone_counts = {k: round(v/total_samples*100, 2) for k, v in zone_counts.items()}
+    plt.text(0.05, -0.01, f'Zone A: {zone_counts["A"]}%, Zone B: {zone_counts["B"]}%, Zone C: {zone_counts["C"]}%, Zone D: {zone_counts["D"]}%, Zone E: {zone_counts["E"]}%', transform=plt.gca().transAxes, fontsize=12, va='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    plt.savefig(f'plots/{model_name}-{dataset_name}-DTS.png')
 
-    # Time points (assuming 5-minute intervals)
-    time_points = np.arange(1, predictions.shape[1] + 1) * 5  # minutes
+    # Percentile + individual error plots (was plot_prediction_percentiles)
+    diffs = predictions - labels
+    pct = np.percentile(diffs, [10, 25, 50, 75, 90], axis=0)
+    print(predictions.shape, labels.shape)
+    t = np.arange(1, predictions.shape[1] + 1) * 5
 
-    # Create figure with two subplots
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12))
-
-    # Subplot 1: Percentiles
-    ax1.fill_between(time_points,
-                     label_percentiles[0],
-                     label_percentiles[4],
-                     alpha=0.3,
-                     color='blue',
-                     label='Predictions 10th-90th percentile')
-    ax1.fill_between(time_points,
-                     label_percentiles[1],
-                     label_percentiles[3],
-                     alpha=0.5,
-                     color='blue',
-                     label='Predictions 25th-75th percentile')
-    ax1.plot(time_points,
-             label_percentiles[2],
-             'b-',
-             linewidth=2,
-             label='Predictions median')
-
-    ax1.set_xlabel('Time (minutes)')
-    ax1.set_ylabel('Absolute Prediction Error')
-    ax1.set_title(
-        f'{model_name.upper()} Prediction Error Percentiles on {dataset_name}\n'
-        f'Percentiles across {predictions.shape[0]} samples')
+    ax1.fill_between(
+        t,
+        pct[0],
+        pct[4],
+        alpha=0.3,
+        color='blue',
+        label='Predictions 10th-90th percentile',
+    )
+    ax1.fill_between(
+        t,
+        pct[1],
+        pct[3],
+        alpha=0.5,
+        color='blue',
+        label='Predictions 25th-75th percentile',
+    )
+    ax1.plot(t, pct[2], 'b-', linewidth=2, label='Predictions median')
+    ax1.set(
+        xlabel='Time (minutes)',
+        ylabel='Absolute Prediction Error',
+        title=(f'{model_name.upper()} Prediction Error Percentiles on '
+               f'{dataset_name}\nPercentiles across {predictions.shape[0]} '
+               'samples'),
+    )
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
-    ax1.text(0.02,
-             0.98,
-             f'Final RMSE: {rmse}\nFinal APE: {ape}%',
-             transform=ax1.transAxes,
-             verticalalignment='top',
-             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
-
-    # Subplot 2: Individual error lines
-    for pred_diff in pred_differences[-1000:]:
-        ax2.plot(time_points, pred_diff, alpha=0.1, linewidth=1)
-
-    ax2.set_ylabel('Absolute Prediction Error')
-    ax2.set_xlabel('Time (minutes)')
-    ax2.set_title(
-        f'{model_name.upper()} Individual Prediction Errors on {dataset_name}')
+    for y in diffs:
+        ax2.plot(t, y, alpha=0.1, linewidth=1)
+    ax2.set(
+        xlabel='Time (minutes)',
+        ylabel='Absolute Prediction Error',
+        title=(f'{model_name.upper()} Individual Prediction Errors on '
+               f'{dataset_name}'),
+    )
     ax2.grid(True, alpha=0.3)
 
     plt.tight_layout()
-
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"Plot saved to {save_path}")
+        print(f'Plot saved to {save_path}')
 
 def run_batch(model_runner, input_batch, label_batch, horizons):
     input_batch = np.stack(input_batch, axis=0)
@@ -109,10 +132,13 @@ def run_batch(model_runner, input_batch, label_batch, horizons):
     labels = label_batch[:,np.array(horizons)-1]
     return preds, labels
 
-def run_benchmark(model, ds, plot, csv_file=None, batch_size=1024):
+def run_benchmark(model, ds, plot, csv_file=None, batch_size=1):
     model_runner = get_model(model.lower())
     horizons = [3, 6, 9, 12]  # 15, 30, 45, 60 minutes.
-
+    #flops, macs, params = calculate_flops(model=model_runner.model,
+    #                                      args = [0, np.random.rand(1, 180), np.random.rand(1, 180)],
+    #                                      print_results=False)
+    #print(f'{model} FLOPS: {flops}, MACS: {macs}, PARAMS: {params}')
     min_sequence_length = 192
 
     total_predictions = np.zeros((0, len(horizons)))
@@ -172,14 +198,13 @@ def run_benchmark(model, ds, plot, csv_file=None, batch_size=1024):
             csv_file.write(f'{model},{ds_name},{predictions_str},{labels_str}\n')
         # Generate plots if requested
         if plot:
-            save_plot = f'plots/{model}-{dataset}.png'
+            save_plot = f'plots/{model}-{ds_name}-percentiles.png'
 
             print(f"\nGenerating prediction vs label plots...")
-            plot_prediction_percentiles(total_predictions,
-                                        total_labels,
-                                        rmses,
-                                        apes,
-                                        dataset,
+            # Plot for 30 minute PH.
+            plot_prediction_percentiles(all_predictions,
+                                        all_labels,
+                                        ds_name,
                                         model,
                                         save_path=save_plot)
     total_rmses = np.sqrt(np.mean((total_labels - total_predictions)**2, axis=0))
@@ -201,7 +226,11 @@ def run_benchmark(model, ds, plot, csv_file=None, batch_size=1024):
               type=str,
               default='results.csv',
               help='Path to save the results (e.g., "results.csv")')
-def main(model, plot, save_csv, subset_size=None):
+@click.option('--batch_size',
+              type=int,
+              default=1,
+              help='Batch size to run the benchmark on')
+def main(model, plot, save_csv, subset_size=None, batch_size=1):
     ds = load_dataset()
     if subset_size is not None:
         ds = ds.take(subset_size)
@@ -210,7 +239,7 @@ def main(model, plot, save_csv, subset_size=None):
     csv_file.write(f'model,dataset,rmse_15,rmse_30,rmse_45,rmse_60,ape_15,ape_30,ape_45,ape_60\n')
 
     for model in models:
-        run_benchmark(model, ds, plot, csv_file)
+        run_benchmark(model, ds, plot, csv_file, batch_size=batch_size)
 
 
 

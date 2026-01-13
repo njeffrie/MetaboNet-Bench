@@ -977,19 +977,12 @@ class UniTS:
             dropout = 0.1
         self.model = Model(configs_list=[configs_list], args = Args())
         ckpt = torch.load(model_path, weights_only=False)
-        # Most likely:
-        sd = ckpt["student"]
-        if any(k.startswith("module.") for k in sd.keys()):
-            sd = {k[len("module."):]: v for k, v in sd.items()}
-
-        missing, unexpected = self.model.load_state_dict(sd, strict=False)
-        print(f'len(missing): {len(missing)}, len(unexpected): {len(unexpected)}')
+        missing, unexpected = self.model.load_state_dict(ckpt, strict=False)
         self.model.eval()
         self.device = device
         self.model.to(device)
 
-    def predict(self, ts, cgm, insulin, carbs, ph = 60):
+    def predict(self, ts, cgm, insulin, carbs):
         x = torch.tensor(np.array(cgm)).float().reshape(1, -1, 1).to(self.device)
-        ts = torch.tensor(np.array(ts).astype(np.int64) // 1e9).float().reshape(1, -1, 1).to(self.device)
-        out = self.model(x_enc=x, x_mark_enc=ts, task_id=0, task_name='long_term_forecast').detach().cpu().numpy()[0]
+        out = self.model(x_enc=x, x_mark_enc=None, task_id=0, task_name='long_term_forecast').detach().cpu().numpy()[0]
         return out

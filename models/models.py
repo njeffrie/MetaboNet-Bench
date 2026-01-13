@@ -3,16 +3,25 @@ from models.zoh import ZeroOrderHold
 from models.linear import LinearRegression
 from models.lstm import LSTM
 from models.UniTS import UniTS
+from models.glucose_decoder import GlucoseDecoderModel
+from models.mean_regression import MeanRegression
 
-model_name_map = {'gluformer': Gluformer('njeffrie/Gluformer'),
-                  'gluformer-tiny': Gluformer('njeffrie/Gluformer-tiny'),
-                  'zoh': ZeroOrderHold(),
-                  'linear': LinearRegression(15),
-                  'lstm': LSTM('njeffrie/LSTMGlucosePrediction'),
-                  'units': UniTS('checkpoints/units_x128_pretrain_checkpoint.pth')}
-
-def get_model(model_name: str):
-    if model_name in model_name_map:
-        return model_name_map[model_name]
+def get_model(name):
+    if name == 'gluformer':
+        return Gluformer('/Users/mkhvalchik/stanford/gluformer/gluformer_hf_model')
+    elif name == 'gluformer-tiny':
+        return Gluformer('/Users/mkhvalchik/stanford/gluformer_tiny_hf/gluformer_hf_model')
+    elif name == 'zoh':
+        return ZeroOrderHold()
+    elif name == 'linear':
+        return LinearRegression(15)
+    elif name == 'lstm':
+        return LSTM('/Users/mkhvalchik/stanford/lstm_hf_model')
+    elif name == 'mean_regression':
+        return MeanRegression()
+    elif name == 'units':
+        return UniTS('checkpoints/units_x128_prompt_tuning_checkpoint1.pth')
+    elif name == 'glucose_decoder':
+        return GlucoseDecoderModel(model_path='/Users/mkhvalchik/stanford/glucose_transformer/checkpoints/glucose_decoder_best.pth')
     else:
-        raise ValueError(f'Model {model_name} not found')
+        raise ValueError(f'Model {name} not found')
