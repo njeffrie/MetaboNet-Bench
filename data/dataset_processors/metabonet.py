@@ -2,6 +2,20 @@ import pandas as pd
 import numpy as np
 import os
 
+# Fill nan values with zero only if there is a valid prior value within the horizon.
+def fill_nan_with_zero_within_horizon(df,
+                                      time_col,
+                                      target_col,
+                                      horizon):
+    t = pd.to_datetime(df[time_col])
+    h = pd.Timedelta(horizon)
+    s = df[target_col]
+
+    last = t.where(s.notna()).ffill()
+    out = df.copy()
+    out.loc[s.isna() & last.notna() & (t - last <= h), target_col] = 0
+    return out
+
 def preprocess(ds_path: str):
     """
     Preprocess the MetaBonet dataset from parquet file.
@@ -12,25 +26,24 @@ def preprocess(ds_path: str):
     Returns:
         DataFrame with columns: PtID, DataDtTm, CGM, Insulin
     """
-    df = pd.read_parquet(ds_path, columns = ['CGM', 'insulin', 'carbs', 'id', 'date', 'source_file', 'insulin_delivery_device'])
+    df = pd.read_parquet(ds_path, columns = ['CGM', 'insulin', 'carbs', 'id', 'date', 'source_file', 'insulin_delivery_device', 'insulin_delivery_modality'])
     df = df.rename(columns = {'id': 'PtID', 'date': 'DataDtTm', 'insulin': 'Insulin', 'carbs': 'Carbs', 'source_file': 'DatasetName'})
     df = df[df['DataDtTm'].notna()]
     df = df[df['PtID'].notna()]
-    df['Insulin'] = df['Insulin'].fillna(method='ffill', limit = 12)
-    df['Carbs'] = df['Carbs'].fillna(method='ffill', limit = 12*6)
-    print(f'Before insulin: {len(df)}')
+
+    df = fill_nan_with_zero_within_horizon(df, time_col='DataDtTm', target_col='Insulin', horizon='1h')
+    df = fill_nan_with_zero_within_horizon(df, time_col='DataDtTm', target_col='Carbs', horizon='6h')
     df = df[df['Insulin'].notna()]  
-    print(f'After insulin: {len(df)}')
     df = df[df['Carbs'].notna()]
-    print(f'After carbs: {len(df)}')
 
     df['DataDtTm'] = pd.to_datetime(df['DataDtTm'])
     df['DataDtTm'] = df['DataDtTm'].dt.floor('5min')
     df['CGM'] = pd.to_numeric(df['CGM'], errors='coerce')
     df['Insulin'] = pd.to_numeric(df['Insulin'], errors='coerce')
     df['Carbs'] = pd.to_numeric(df['Carbs'], errors='coerce')
-    df = df[df['insulin_delivery_device'] != 'Multiple Daily Injections']
-    print(f'After insulin delivery device: {len(df)}')
+    mdi_filter = df['insulin_delivery_device'] != 'Multiple Daily Injections'
+    mdi_filter = mdi_filter | (df['insulin_delivery_modality'] != 'MDI')
+    df = df[mdi_filter]
     df['Carbs'] = df['Carbs'].clip(lower=0.0, upper=200.0)
 
     df = df.sort_values(['DatasetName', 'PtID', 'DataDtTm'])
