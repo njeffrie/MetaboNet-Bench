@@ -4,7 +4,6 @@ from models.linear import LinearRegression
 from models.lstm import LSTM
 from models.UniTS import UniTS
 from models.glucose_decoder import GlucoseDecoderModel
-from models.mean_regression import MeanRegression
 
 def get_model(name):
     if name == 'gluformer':
@@ -17,8 +16,6 @@ def get_model(name):
         return LinearRegression(15)
     elif name == 'lstm':
         return LSTM('njeffrie/LSTMGlucosePrediction')
-    elif name == 'mean_regression':
-        return MeanRegression()
     elif name == 'units':
         return UniTS('checkpoints/units_x128_prompt_tuning_checkpoint1.pth')
     elif name == 'glucose_decoder':
