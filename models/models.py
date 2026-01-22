@@ -8,15 +8,15 @@ from models.mean_regression import MeanRegression
 
 def get_model(name):
     if name == 'gluformer':
-        return Gluformer('/Users/mkhvalchik/stanford/gluformer/gluformer_hf_model')
+        return Gluformer('njeffrie/Gluformer')
     elif name == 'gluformer-tiny':
-        return Gluformer('/Users/mkhvalchik/stanford/gluformer_tiny_hf/gluformer_hf_model')
+        return Gluformer('njeffrie/Gluformer-tiny')
     elif name == 'zoh':
         return ZeroOrderHold()
     elif name == 'linear':
         return LinearRegression(15)
     elif name == 'lstm':
-        return LSTM('/Users/mkhvalchik/stanford/lstm_hf_model')
+        return LSTM('njeffrie/LSTMGlucosePrediction')
     elif name == 'mean_regression':
         return MeanRegression()
     elif name == 'units':
