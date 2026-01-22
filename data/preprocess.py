@@ -28,46 +28,51 @@ class DatsetPreprocessor:
         ds = pd.DataFrame()
 
         sequence_id = 0
-        for patient_id in tqdm(patient_ids):
-            # Get data for the specified patient.
-            patient_data = self.dataset[self.dataset['PtID'] == patient_id]
-            start_time = patient_data['DataDtTm'].min()
-            end_time = patient_data['DataDtTm'].max()
-            sequence_times = pd.date_range(start_time, end_time, freq='5min')
-            patient_data = patient_data.merge(
-                pd.DataFrame({'DataDtTm': sequence_times}),
-                on='DataDtTm',
-                how='outer').sort_values('DataDtTm').reset_index(drop=True)
-            patient_data['Insulin'] = patient_data['Insulin'].fillna(value=0.0)
-            patient_data['Carbs'] = patient_data['Carbs'].fillna(value=0.0)
-            patient_data['PtID'] = patient_data['PtID'].ffill()
+        for ds_name, ds_data in self.dataset.groupby('DatasetName'):
+            for patient_id in tqdm(ds_data['PtID'].unique()):
+                # Get data for the specified patient.
+                patient_data = ds_data[ds_data['PtID'] == patient_id]
+                start_time = patient_data['DataDtTm'].min()
+                end_time = patient_data['DataDtTm'].max()
+                sequence_times = pd.date_range(start_time, end_time, freq='5min')
+                patient_data = patient_data.merge(
+                    pd.DataFrame({'DataDtTm': sequence_times}),
+                    on='DataDtTm',
+                    how='outer').sort_values('DataDtTm').reset_index(drop=True)
+                patient_data['Insulin'] = patient_data['Insulin'].fillna(value=0.0)
+                patient_data['Carbs'] = patient_data['Carbs'].fillna(value=0.0)
+                patient_data['PtID'] = patient_data['PtID'].ffill()
 
-            # Interpolate CGM but only keep sub-30 minute gaps bookended by valid data.
-            patient_data['CGM'] = patient_data['CGM'].interpolate(
-                method='linear',
-                limit_direction='forward',
-                limit=6,
-                limit_area='inside')
-            mask = patient_data['CGM'].isna()
-            mask = mask.where(mask, other=np.nan).infer_objects(copy=False)
-            mask = mask.bfill(limit=6, limit_area='outside')
-            mask = mask.isna()
-            patient_data['CGM'] = patient_data['CGM'].where(mask, other=np.nan)
+                # Interpolate CGM but only keep sub-30 minute gaps bookended by valid data.
+                patient_data['CGM'] = patient_data['CGM'].interpolate(
+                    method='linear',
+                    limit_direction='forward',
+                    limit=6,
+                    limit_area='inside')
+                mask = patient_data['CGM'].isna()
+                mask = mask.where(mask, other=np.nan).infer_objects(copy=False)
+                mask = mask.bfill(limit=6, limit_area='outside')
+                mask = mask.isna()
+                patient_data['CGM'] = patient_data['CGM'].where(mask, other=np.nan)
 
-            # Find sequences of non-missing CGM data and number them.
-            is_not_nan = patient_data['CGM'].notna()
-            starts = is_not_nan & (~is_not_nan.shift(1, fill_value=False))
-            patient_data['SequenceID'] = starts.cumsum() - 1 + sequence_id
+                # Find sequences of non-missing CGM data and number them.
+                is_not_nan = patient_data['CGM'].notna()
+                starts = is_not_nan & (~is_not_nan.shift(1, fill_value=False))
+                patient_data['SequenceID'] = starts.cumsum() - 1 + sequence_id
 
-            sequence_id = patient_data['SequenceID'].max()
-            patient_data = patient_data[patient_data['CGM'].notna()]
+                sequence_id = patient_data['SequenceID'].max()
+                patient_data = patient_data[patient_data['CGM'].notna()]
 
-            ds = pd.concat([
-                ds, patient_data[[
-                    'PtID', 'DataDtTm', 'CGM', 'Insulin', 'Carbs', 'SequenceID', 'DatasetName'
-                ]]
-            ])
-        self.dataset = ds
+                ds = pd.concat([
+                    ds, patient_data[[
+                        'PtID', 'DataDtTm', 'CGM', 'Insulin', 'Carbs', 'SequenceID', 'DatasetName'
+                    ]]
+                ])
+        # Filter out sequences shorter than 192 samples
+        seq_counts = ds.groupby('SequenceID').size()
+        valid_sequences = seq_counts[seq_counts >= 192].index
+        self.dataset = ds[ds['SequenceID'].isin(valid_sequences)]
+
 
     def save_data(self):
         split = 'test' if 'test' in self.dataset_path else 'train'

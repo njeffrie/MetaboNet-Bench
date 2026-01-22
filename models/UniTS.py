@@ -983,6 +983,7 @@ class UniTS:
         self.model.to(device)
 
     def predict(self, ts, cgm, insulin, carbs):
-        x = torch.tensor(np.array(cgm)).float().reshape(1, -1, 1).to(self.device)
-        out = self.model(x_enc=x, x_mark_enc=None, task_id=0, task_name='long_term_forecast').detach().cpu().numpy()[0]
+        batch_size = cgm.shape[0]
+        x = torch.tensor(np.array(cgm)).float().reshape(batch_size, -1, 1).to(self.device)
+        out = self.model(x_enc=x, x_mark_enc=None, task_id=0, task_name='long_term_forecast').detach().cpu().numpy().reshape(batch_size, -1)
         return out
