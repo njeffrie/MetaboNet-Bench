@@ -262,3 +262,134 @@ def plot_rmse_by_cgm_interval(results_dir: str = "results", dataset_filter: str 
     
     if show:
         plt.show()
+
+
+def plot_count_by_cgm_interval(results_dir: str = "results", dataset_filter: str = None, 
+                               horizons: Union[List[int], str] = "all", save_path: str = None, show: bool = True,
+                               ylim: Optional[Tuple[float, float]] = None, show_oob_indicators: bool = True):
+    """
+    Plot count of true label values by CGM intervals (uses first available model).
+    
+    Args:
+        results_dir: Path to results directory
+        dataset_filter: Filter to specific dataset (if None, uses all datasets combined)
+        horizons: Forecast horizons to include (list of indices 0-11, or "all")
+        save_path: Path to save the plot (optional)
+        show: Whether to display the plot
+        ylim: Y-axis limits as (min, max) tuple. Set to None for auto-scaling.
+        show_oob_indicators: Show arrows and values for out-of-bounds points. Default: True
+    """
+    # Load model results with optional dataset filter
+    dataset_names = [dataset_filter] if dataset_filter else None
+    results = load_model_results(results_dir, dataset_names=dataset_names)
+    
+    if not results:
+        raise ValueError("No results found")
+    
+    # Use the first available model (labels are consistent across models)
+    first_model_name = sorted(results.keys())[0]
+    
+    if dataset_filter:
+        # Use specific dataset
+        if dataset_filter in results[first_model_name]:
+            combined_preds, combined_labels = results[first_model_name][dataset_filter]
+        else:
+            raise ValueError(f"Dataset {dataset_filter} not found")
+    else:
+        # Combine all datasets for this model
+        combined_preds, combined_labels = combine_datasets(results, first_model_name)
+    
+    # Define CGM intervals
+    intervals = [
+        ("<50", lambda x: x < 50),
+        ("50-70", lambda x: (x >= 50) & (x < 70)),
+        ("70-140", lambda x: (x >= 70) & (x < 140)),
+        ("140-180", lambda x: (x >= 140) & (x < 180)),
+        ("180-250", lambda x: (x >= 180) & (x < 250)),
+        (">250", lambda x: x >= 250)
+    ]
+    
+    # Handle horizons parameter
+    if horizons == "all":
+        horizon_indices = list(range(12))
+        horizon_label = "all horizons"
+    else:
+        horizon_indices = horizons
+        if len(horizon_indices) == 1:
+            horizon_label = f"horizon {(horizon_indices[0] + 1) * 5} min"
+        else:
+            horizon_times = [(h + 1) * 5 for h in horizon_indices]
+            horizon_label = f"horizons {horizon_times}"
+    
+    # Set Times New Roman font
+    plt.rcParams['font.family'] = 'Times New Roman'
+    
+    plt.figure(figsize=(12, 8))
+    
+    # Calculate count for each interval (using only labels)
+    interval_names = [interval[0] for interval in intervals]
+    count_by_interval = []
+    
+    for interval_name, interval_func in intervals:
+        # Count only true labels for this interval across specified horizons
+        total_count = 0
+        
+        for h_idx in horizon_indices:
+            labels_h = combined_labels[:, h_idx]
+            
+            # Count values in this CGM interval based on true values only
+            mask = interval_func(labels_h)
+            total_count += np.sum(mask)
+        
+        count_by_interval.append(total_count)
+    
+    # Plot bar chart
+    x_pos = np.arange(len(interval_names))
+    bars = plt.bar(x_pos, count_by_interval, alpha=0.7, edgecolor='black', linewidth=1)
+    
+    # Store out-of-bounds information
+    oob_data = []
+    if show_oob_indicators and ylim is not None:
+        upper_bound = ylim[1]
+        for i, (x, count_val) in enumerate(zip(x_pos, count_by_interval)):
+            if count_val > upper_bound:
+                oob_data.append((x, upper_bound, count_val, bars[i].get_facecolor(), 'counts'))
+    
+    plt.xlabel('CGM Interval (mg/dL)', fontsize=12)
+    plt.ylabel('Count', fontsize=12)
+    
+    # Update title based on dataset filter and horizons
+    title_parts = ['True Values Count by CGM Interval']
+    if dataset_filter:
+        title_parts.append(f'on {dataset_filter}')
+    if horizons != "all":
+        title_parts.append(f'({horizon_label})')
+    
+    plt.title(' '.join(title_parts), fontsize=14, fontweight='bold')
+    plt.xticks(range(len(interval_names)), interval_names, rotation=45)
+    
+    # Add out-of-bounds indicators before setting ylim
+    if oob_data:
+        for x, y_pos, actual_value, color, model in oob_data:
+            # Draw upward arrow at the upper bound
+            plt.annotate('', xy=(x, y_pos), xytext=(x, y_pos - 50),
+                        arrowprops={'arrowstyle': '->', 'facecolor': color, 'edgecolor': color, 'lw': 1.5})
+            
+            # Add value annotation above the arrow
+            plt.annotate(f'{int(actual_value)}', xy=(x, y_pos), xytext=(x, y_pos + 50),
+                        ha='center', va='bottom', fontsize=9, color=color, fontweight='bold')
+    
+    # Set y-axis limits if specified
+    if ylim is not None:
+        plt.ylim(ylim)
+    
+    # Remove legend since we're not showing multiple models
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Plot saved to {save_path}")
+    
+    if show:
+        plt.show()

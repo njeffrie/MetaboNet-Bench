@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import click
-from analysis.plots import plot_rmse_by_horizon, plot_rmse_by_cgm_interval
+from analysis.plots import plot_rmse_by_horizon, plot_rmse_by_cgm_interval, plot_count_by_cgm_interval
 
 
 @click.group()
@@ -64,6 +64,49 @@ def cgm_interval_plot(results_dir, dataset, horizons, save_path, show):
     
     plot_rmse_by_cgm_interval(results_dir=results_dir, dataset_filter=dataset, 
                               horizons=horizon_indices, save_path=save_path, show=show)
+
+
+@cli.command()
+@click.option('--results_dir', default='results', help='Path to results directory')
+@click.option('--dataset', default=None, help='Filter to specific dataset (e.g., AZT1D, CTR3)')
+@click.option('--horizons', default='all', help='Forecast horizons: "all" or comma-separated indices (0-11)')
+@click.option('--save_path', default=None, help='Path to save the plot')
+@click.option('--show/--no-show', default=True, help='Whether to display the plot')
+@click.option('--ylim', default=None, help='Y-axis limits as "min,max" (e.g., "0,1000")')
+def count_by_cgm_plot(results_dir, dataset, horizons, save_path, show, ylim):
+    """Generate count by CGM interval plot."""
+    # Parse horizons parameter
+    if horizons == 'all':
+        horizon_indices = 'all'
+    else:
+        try:
+            horizon_indices = [int(h.strip()) for h in horizons.split(',')]
+            # Validate horizon indices
+            if not all(0 <= h <= 11 for h in horizon_indices):
+                raise ValueError("Horizon indices must be between 0 and 11")
+        except ValueError as e:
+            click.echo(f"Error parsing horizons: {e}", err=True)
+            return
+    
+    # Parse ylim parameter
+    ylim_tuple = None
+    if ylim:
+        try:
+            ylim_parts = [float(x.strip()) for x in ylim.split(',')]
+            if len(ylim_parts) != 2:
+                raise ValueError("ylim must have exactly 2 values")
+            ylim_tuple = (ylim_parts[0], ylim_parts[1])
+        except ValueError as e:
+            click.echo(f"Error parsing ylim: {e}. Expected format: 'min,max'", err=True)
+            return
+    
+    if dataset:
+        print(f"Generating count by CGM interval plot for dataset: {dataset}")
+    else:
+        print("Generating count by CGM interval plot for all datasets combined...")
+    
+    plot_count_by_cgm_interval(results_dir=results_dir, dataset_filter=dataset, 
+                               horizons=horizon_indices, save_path=save_path, show=show, ylim=ylim_tuple)
 
 
 @cli.command()
@@ -212,7 +255,7 @@ if __name__ == "__main__":
         main()
     else:
         # Check if first argument is a subcommand
-        if sys.argv[1] in ['horizon-plot', 'cgm-interval-plot', 'all-plots', 'generate-all-combinations']:
+        if sys.argv[1] in ['horizon-plot', 'cgm-interval-plot', 'count-by-cgm-plot', 'all-plots', 'generate-all-combinations']:
             cli()
         else:
             # Old style arguments - run main
