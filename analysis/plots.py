@@ -37,6 +37,9 @@ def plot_rmse_by_horizon(results_dir: str = "results", dataset_filter: str = Non
     # Forecast horizons (5, 10, 15, ..., 60 minutes)
     horizons = np.arange(1, 13) * 5
     
+    # Set Times New Roman font
+    plt.rcParams['font.family'] = 'Times New Roman'
+    
     plt.figure(figsize=(12, 8))
     
     # Store out-of-bounds information
@@ -162,6 +165,9 @@ def plot_rmse_by_cgm_interval(results_dir: str = "results", dataset_filter: str 
         else:
             horizon_times = [(h + 1) * 5 for h in horizon_indices]
             horizon_label = f"horizons {horizon_times}"
+    
+    # Set Times New Roman font
+    plt.rcParams['font.family'] = 'Times New Roman'
     
     plt.figure(figsize=(12, 8))
     
