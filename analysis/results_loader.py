@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import pandas as pd
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Union
 
@@ -294,3 +295,132 @@ def filter_by_user_ids(predictions: np.ndarray, labels: np.ndarray, user_ids: np
     mask = np.isin(sample_user_ids, target_user_ids)
     
     return predictions[mask], labels[mask], user_ids[mask]
+
+
+def load_demographics(results_dir: str = "results", dataset_name: str = None, 
+                     demographic_cols: List[str] = ["age"]) -> Dict[str, float]:
+    """
+    Load demographic data for a specific dataset.
+    
+    Args:
+        results_dir: Path to results directory
+        dataset_name: Name of the dataset
+        demographic_cols: List of demographic columns to load
+    
+    Returns:
+        Dictionary mapping user_id (as string) to demographic values
+        Format: {"user_id": demographic_value} for single column
+                {"user_id": {"col1": val1, "col2": val2}} for multiple columns
+    """
+    data_path = Path(results_dir) / "data" / f"{dataset_name}.parquet"
+    
+    if not data_path.exists():
+        raise FileNotFoundError(f"Demographics file not found: {data_path}")
+    
+    # Load only necessary columns for efficiency
+    cols_to_load = ["id"] + demographic_cols
+    df = pd.read_parquet(data_path, columns=cols_to_load)
+    
+    # Create mapping from user_id to demographic values
+    if len(demographic_cols) == 1:
+        # Single column - return simple dict
+        demo_col = demographic_cols[0]
+        user_demographics = {}
+        for _, row in df[['id', demo_col]].drop_duplicates('id').iterrows():
+            # Skip users with NaN demographic values
+            demo_value = row[demo_col]
+            if pd.notna(demo_value):
+                user_demographics[str(row['id'])] = demo_value
+    else:
+        # Multiple columns - return nested dict
+        user_demographics = {}
+        cols = ['id'] + demographic_cols
+        for _, row in df[cols].drop_duplicates('id').iterrows():
+            user_id = str(row['id'])
+            # Only include users where all requested demographics are non-NaN
+            demo_values = {col: row[col] for col in demographic_cols}
+            if all(pd.notna(val) for val in demo_values.values()):
+                user_demographics[user_id] = demo_values
+    
+    return user_demographics
+
+
+def load_all_demographics(results_dir: str = "results", 
+                         demographic_cols: List[str] = ["age"]) -> Dict[str, float]:
+    """
+    Load demographic data for all available datasets.
+    
+    Args:
+        results_dir: Path to results directory  
+        demographic_cols: List of demographic columns to load
+    
+    Returns:
+        Dictionary mapping global_user_id to demographic values
+        Format: {"dataset_userid": demographic_value} for single column
+                {"dataset_userid": {"col1": val1, "col2": val2}} for multiple columns
+        Example: {"AZT1D_5": 65.0, "CTR3_9": 46.0}
+    """
+    data_dir = Path(results_dir) / "data"
+    
+    if not data_dir.exists():
+        raise FileNotFoundError(f"Data directory not found: {data_dir}")
+    
+    # Find all parquet files
+    parquet_files = list(data_dir.glob("*.parquet"))
+    
+    if not parquet_files:
+        raise FileNotFoundError(f"No parquet files found in {data_dir}")
+    
+    all_demographics = {}
+    
+    for parquet_file in parquet_files:
+        dataset_name = parquet_file.stem  # filename without extension
+        
+        try:
+            # Load demographics for this dataset
+            dataset_demographics = load_demographics(results_dir, dataset_name, demographic_cols)
+            
+            # Add with dataset prefix to create global user IDs
+            for user_id, demo_data in dataset_demographics.items():
+                global_user_id = f"{dataset_name}_{user_id}"
+                all_demographics[global_user_id] = demo_data
+                
+        except Exception as e:
+            print(f"Warning: Could not load demographics for {dataset_name}: {e}")
+            continue
+    
+    return all_demographics
+
+
+def map_result_users_to_demographics(user_ids: np.ndarray, dataset_name: str, 
+                                    demographics: Dict[str, float]) -> Dict[float, float]:
+    """
+    Map user IDs from result arrays to demographic values.
+    
+    Args:
+        user_ids: Array of user IDs from results (numeric)
+        dataset_name: Name of the dataset (for all-datasets case)
+        demographics: Demographics dictionary from load_demographics or load_all_demographics
+    
+    Returns:
+        Dictionary mapping numeric user_id to demographic value
+    """
+    user_demo_map = {}
+    
+    for user_id in np.unique(user_ids):
+        # Convert numeric user_id to string
+        user_id_str = str(int(user_id))
+        
+        # Create the lookup key
+        if dataset_name:
+            # Single dataset case
+            lookup_key = user_id_str
+        else:
+            # All datasets case - we need to find which dataset this user belongs to
+            # This is more complex and handled in the plotting function
+            continue
+            
+        if lookup_key in demographics:
+            user_demo_map[user_id] = demographics[lookup_key]
+    
+    return user_demo_map
