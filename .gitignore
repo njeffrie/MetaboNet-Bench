@@ -2,3 +2,5 @@
 results/
 venv/
 */__pycache__/
+figures/
+.DS_Store

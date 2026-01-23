@@ -5,19 +5,31 @@ from .results_loader import load_model_results, combine_datasets
 from .metrics import calculate_rmse
 
 
-def plot_rmse_by_horizon(results_dir: str = "results", dataset_filter: str = None, save_path: str = None, show: bool = True):
+def plot_rmse_by_horizon(results_dir: str = "results", dataset_filter: str = None, 
+                         cgm_filter: str = None, save_path: str = None, show: bool = True):
     """
     Plot RMSE by forecast horizon for all models.
     
     Args:
         results_dir: Path to results directory
         dataset_filter: Filter to specific dataset (if None, uses all datasets combined)
+        cgm_filter: Filter by CGM range ("<70", "<50", "70-140", "70-180", ">180", ">250")
         save_path: Path to save the plot (optional)
         show: Whether to display the plot
     """
     # Load model results with optional dataset filter
     dataset_names = [dataset_filter] if dataset_filter else None
     results = load_model_results(results_dir, dataset_names=dataset_names)
+    
+    # Define CGM filter functions
+    cgm_filters = {
+        "<70": lambda x: x < 70,
+        "<50": lambda x: x < 50,
+        "70-140": lambda x: (x >= 70) & (x < 140),
+        "70-180": lambda x: (x >= 70) & (x < 180),
+        ">180": lambda x: x > 180,
+        ">250": lambda x: x > 250
+    }
     
     # Forecast horizons (5, 10, 15, ..., 60 minutes)
     horizons = np.arange(1, 13) * 5
@@ -40,6 +52,17 @@ def plot_rmse_by_horizon(results_dir: str = "results", dataset_filter: str = Non
         for h_idx in range(12):  # 12 forecast horizons
             preds_h = combined_preds[:, h_idx]
             labels_h = combined_labels[:, h_idx]
+            
+            # Apply CGM filter if specified
+            if cgm_filter and cgm_filter in cgm_filters:
+                mask = cgm_filters[cgm_filter](labels_h)
+                if np.any(mask):
+                    preds_h = preds_h[mask]
+                    labels_h = labels_h[mask]
+                else:
+                    rmse_values.append(np.nan)  # No data in this range
+                    continue
+            
             rmse = calculate_rmse(preds_h, labels_h)
             rmse_values.append(rmse)
         
@@ -49,12 +72,14 @@ def plot_rmse_by_horizon(results_dir: str = "results", dataset_filter: str = Non
     plt.xlabel('Forecast Horizon (minutes)', fontsize=12)
     plt.ylabel('RMSE (mg/dL)', fontsize=12)
     
-    # Update title based on dataset filter
+    # Update title based on filters
+    title_parts = ['RMSE by Forecast Horizon for All Models']
     if dataset_filter:
-        title = f'RMSE by Forecast Horizon for All Models on {dataset_filter}'
-    else:
-        title = 'RMSE by Forecast Horizon for All Models (All Datasets)'
-    plt.title(title, fontsize=14, fontweight='bold')
+        title_parts.append(f'on {dataset_filter}')
+    if cgm_filter:
+        title_parts.append(f'(CGM {cgm_filter} mg/dL)')
+    
+    plt.title(' '.join(title_parts), fontsize=14, fontweight='bold')
     
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.grid(True, alpha=0.3)
