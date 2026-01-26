@@ -173,11 +173,13 @@ class GlucoseTransformer(nn.Module):
 
 
 class GlucoseDecoderModel:
-    def __init__(self, model_path):
+    def __init__(self, model_path, device='mps'):
         self.model = GlucoseTransformer()
-        self.model.load_state_dict(torch.load(model_path))
+        self.model.load_state_dict(torch.load(model_path, map_location=device))
         self.model.eval()
         self.preprocessor = Preprocessor()
+        self.model.to(device)
+        self.device = device
 
     def _time_features(self, ts):
         # ts: (B, T) seconds since epoch
@@ -205,12 +207,12 @@ class GlucoseDecoderModel:
             tf,
         ], dim=-1)  # (B, T, 7)
         x = x.to(torch.float32)
+        x = x.to(self.device)
         T = 180-13 # 15 hours in 5-minute increments
         if x.shape[1] > T:
             x = x[:, -T:, :]
-
         with torch.no_grad():
             delta_hat = self.model(x, mask=None)
             preds = (x[:, -1, 0].unsqueeze(-1) + delta_hat[:, -1, :])  # (B, 12)
 
-        return self.preprocessor.unnormalize(preds).int().numpy()
+        return self.preprocessor.unnormalize(preds).cpu().int().numpy()

@@ -965,7 +965,7 @@ class Model(nn.Module):
 
 import numpy as np
 class UniTS:
-    def __init__(self, model_path, device='mps'):
+    def __init__(self, model_path, device='cpu'):
         configs_list = ['CGM', {'task_name': 'long_term_forecast', 'seq_len': 180, 'pred_len':12}]
         class Args:
             d_model = 128
