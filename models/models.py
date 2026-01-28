@@ -5,7 +5,7 @@ from models.lstm import LSTM
 from models.UniTS import UniTS
 from models.glucose_decoder import GlucoseDecoderModel
 
-def get_model(name, device='mps'):
+def get_model(name, device='cpu'):
     if name == 'gluformer':
         return Gluformer('njeffrie/Gluformer', device)
     elif name == 'gluformer-tiny':

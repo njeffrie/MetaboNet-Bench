@@ -20,8 +20,8 @@ def run_batch(model_runner, input_batch, label_batch):
     preds = model_runner.predict(ts.squeeze(1), cgm.squeeze(1), insulin.squeeze(1), carbs.squeeze(1))
     return preds, labels
 
-def run_benchmark(model, ds, batch_size=1):
-    model_runner = get_model(model.lower())
+def run_benchmark(model, ds, batch_size=1, device='cpu'):
+    model_runner = get_model(model.lower(), device=device)
     min_sequence_length = 192
     pred_len = 12
 
@@ -105,7 +105,11 @@ def run_benchmark(model, ds, batch_size=1):
               type=int,
               default=1,
               help='Batch size to run the benchmark on')
-def main(model, subset_size=None, batch_size=1):
+@click.option('--device',
+              type=str,
+              default='cpu',
+              help='Device to run the benchmark on')
+def main(model, subset_size=None, batch_size=1, device='cpu'):
     ds = load_dataset()
     if subset_size is not None:
         ds = ds.take(subset_size)
@@ -115,7 +119,7 @@ def main(model, subset_size=None, batch_size=1):
             os.makedirs(f'results/{model}')
 
     for model in models:
-        run_benchmark(model, ds, batch_size=batch_size)
+        run_benchmark(model, ds, batch_size=batch_size, device=device)
 
 
 
