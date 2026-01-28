@@ -977,7 +977,7 @@ class UniTS:
             dropout = 0.1
         self.model = Model(configs_list=[configs_list], args = Args())
         ckpt = torch.load(model_path, weights_only=False)
-        missing, unexpected = self.model.load_state_dict(ckpt, strict=False)
+        missing, unexpected = self.model.load_state_dict(ckpt, strict=Fals, map_location=device)
         self.model.eval()
         self.device = device
         self.model.to(device)
