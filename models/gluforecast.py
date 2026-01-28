@@ -120,7 +120,7 @@ class _Block(nn.Module):
         x = x + self.mlp(self.ln2(x))
         return x
 
-class GlucoseTransformer(nn.Module):
+class GluforecastModel(nn.Module):
     def __init__(
         self,
         d_in=7,
@@ -172,9 +172,9 @@ class GlucoseTransformer(nn.Module):
         return y  # (B, T, 12), cache
 
 
-class GlucoseDecoderModel:
-    def __init__(self, model_path, device='mps'):
-        self.model = GlucoseTransformer()
+class Gluforecast:
+    def __init__(self, model_path, device='cpu'):
+        self.model = GluforecastModel()
         self.model.load_state_dict(torch.load(model_path, map_location=device))
         self.model.eval()
         self.preprocessor = Preprocessor()

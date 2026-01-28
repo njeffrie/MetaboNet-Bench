@@ -48,4 +48,4 @@ def preprocess(ds_path: str):
 
     df = df.sort_values(['DatasetName', 'PtID', 'DataDtTm'])
     df = df.reset_index(drop=True)
-    return df[['PtID', 'DataDtTm', 'CGM', 'Insulin', 'Carbs','DatasetName']]
+    return df[['PtID', 'DataDtTm', 'CGM', 'Insulin', 'Carbs', 'DatasetName']]

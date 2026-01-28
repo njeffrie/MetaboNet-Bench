@@ -8,11 +8,12 @@ class LSTM:
 
     def __init__(
             self,
-            huggingface_model_name: str = 'njeffrie/LSTMGlucosePrediction'):
+            huggingface_model_name: str = 'njeffrie/LSTMGlucosePrediction', device='cpu'):
         self.model = AutoModel.from_pretrained(huggingface_model_name,
                                                trust_remote_code=True)
         self.config = AutoConfig.from_pretrained(huggingface_model_name,
                                                  trust_remote_code=True)
+        self.model.to(device)
         self.model.eval()
 
     def predict(self, timestamps, cgm, insulin, carbs):
@@ -21,5 +22,5 @@ class LSTM:
         assert(cgm.shape[1] >= self.config.len_seq)
         glucose = cgm[:, -self.config.len_seq:]
         with torch.no_grad():
-            pred = self.model(glucose)
+            pred = self.model(glucose.to(self.model.device))
         return pred.numpy()
