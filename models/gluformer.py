@@ -14,6 +14,7 @@ class Gluformer:
         self.model.eval()
         self.device = device
         self.model.to(self.device)
+        self.model.model.device = self.device
 
     def predict(self, timestamps, cgm, insulin, carbs):
         subject_id = 0

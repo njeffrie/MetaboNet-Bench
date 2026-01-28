@@ -7,7 +7,8 @@ from models.glucose_decoder import GlucoseDecoderModel
 
 def get_model(name, device='cpu'):
     if name == 'gluformer':
-        return Gluformer('njeffrie/Gluformer', device)
+        return Gluformer('/Users/mkhvalchik/stanford/gluformer/gluformer_hf_model', device)
+        #return Gluformer('njeffrie/Gluformer', device)
     elif name == 'gluformer-tiny':
         return Gluformer('njeffrie/Gluformer-tiny', device)
     elif name == 'zoh':

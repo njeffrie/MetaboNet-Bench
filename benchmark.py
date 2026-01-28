@@ -1,102 +1,160 @@
 from models.models import get_model
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
-from datasets import Dataset
 import click
-import matplotlib.pyplot as plt
 import os
 import re
 
-def load_dataset():
-    ds_path = f'data/metabonet_test.parquet'
-    ds = Dataset.from_parquet(ds_path)
-    ds.set_format('pandas')
-    return ds
+def load_dataset(subset_size=None):
+    """Load dataset from parquet file using pandas."""
+    df = pd.read_parquet('data/metabonet_test.parquet')
+    if subset_size is not None:
+        df = df.head(subset_size)
+    return df
 
-def run_batch(model_runner, input_batch, label_batch):
-    input_batch = np.stack(input_batch, axis=0)
-    labels = np.stack(label_batch, axis=0)
-    ts, cgm, insulin, carbs = np.split(input_batch, 4, axis=1)
-    preds = model_runner.predict(ts.squeeze(1), cgm.squeeze(1), insulin.squeeze(1), carbs.squeeze(1))
-    return preds, labels
+def run_batch(model_runner, input_batch):
+    """Run model prediction on a batch of inputs."""
+    input_array = np.stack(input_batch, axis=0)
+    ts, cgm, insulin, carbs = np.split(input_array, 4, axis=1)
+    preds = model_runner.predict(
+        ts.squeeze(1), 
+        cgm.squeeze(1), 
+        insulin.squeeze(1), 
+        carbs.squeeze(1)
+    )
+    return preds
 
-def run_benchmark(model, ds, batch_size=1, device='cpu'):
+def extract_patient_id(patient_id):
+    """Extract numeric patient ID from string."""
+    return int(re.findall(r'\d+', str(patient_id))[-1])
+
+def run_benchmark(model, df, batch_size=1, device='cpu'):
+    """Run benchmark on a model and save results to parquet."""
     model_runner = get_model(model.lower(), device=device)
     min_sequence_length = 192
     pred_len = 12
-
-    total_predictions = np.zeros((0, pred_len))
-    total_labels = np.zeros((0, pred_len))
-    for ds_name, selected_dataset in ds.to_pandas().groupby('DatasetName'):
-        print(len(selected_dataset))
-
-        all_predictions = np.zeros((0, pred_len))
-        all_labels = np.zeros((0, pred_len))
-        all_patient_ids = np.zeros((0, pred_len))
+    step_size = 12  # 1 hour increments
+    
+    # Collect all results
+    all_results = []
+    
+    for ds_name, dataset_group in df.groupby('DatasetName'):
+        print(f'Processing dataset: {ds_name} ({len(dataset_group)} rows)')
+        
         input_batch = []
-        label_batch = []
-        all_ts = np.zeros((0, pred_len))
-        for patient_id, patient_data in tqdm(selected_dataset.groupby('PtID'), position=0, leave=False):
-            # Remove any non-numeric portions of the patient id.
-            patient_id = int(re.findall(r'\d+', patient_id)[-1])
-            for _, sequence_data in tqdm(patient_data.groupby('SequenceID'),
-                                        position=1,
-                                        leave=False):
-                if len(sequence_data) < min_sequence_length:
+        batch_metadata = []
+        batch_labels = []
+        batch_pred_timestamps = []
+        
+        for patient_id, patient_data in tqdm(dataset_group.groupby('PtID'), 
+                                            desc=f'{ds_name} patients'):
+            patient_id_num = extract_patient_id(patient_id)
+            
+            for seq_id, sequence_data in patient_data.groupby('SequenceID'):
+                seq_len = len(sequence_data)
+                if seq_len < min_sequence_length:
                     continue
-                for i in tqdm(range(0,
-                                    len(sequence_data) - min_sequence_length + 1,
-                                    12),
-                            position=2,
-                            leave=False):  # increment by one hour.
-                    cgm_values = sequence_data['CGM'].values[i:i + 192]
-                    timestamps = sequence_data['DataDtTm'].values[i:i + 180].astype(np.int64)
-                    model_input = cgm_values[-192:-12]
-                    label = cgm_values[-12:]
-                    insulin_values = sequence_data['Insulin'].values[i:i + 180]
-                    carbs_values = sequence_data['Carbs'].values[i:i + 180]
-                    input_batch.append(np.stack([timestamps, model_input, insulin_values, carbs_values], axis=0))
-                    label_batch.append(label)
-                    all_ts = np.concatenate([all_ts, np.array(timestamps[-12:]).reshape(1, -1)], axis=0)
+                
+                # Convert to numpy arrays once
+                cgm_values = sequence_data['CGM'].values
+                timestamps = sequence_data['DataDtTm'].values.astype(np.int64)
+                insulin_values = sequence_data['Insulin'].values
+                carbs_values = sequence_data['Carbs'].values
+                
+                # Generate sliding windows
+                for i in range(0, seq_len - min_sequence_length + 1, step_size):
+                    end_idx = i + min_sequence_length
+                    cgm_window = cgm_values[i:end_idx]
+                    
+                    # Model input: last 180 timesteps (192 - 12)
+                    model_input_cgm = cgm_window[-192:-12]
+                    label = cgm_window[-12:]
+                    
+                    # Corresponding timestamps, insulin, carbs (180 timesteps)
+                    ts_window = timestamps[i:i+180]
+                    insulin_window = insulin_values[i:i+180]
+                    carbs_window = carbs_values[i:i+180]
+                    
+                    # Prediction timestamps: last 12 timesteps (corresponding to label)
+                    pred_timestamps = timestamps[i+180:i+min_sequence_length]
+                    
+                    # Store batch item
+                    input_batch.append(np.stack([
+                        ts_window, 
+                        model_input_cgm, 
+                        insulin_window, 
+                        carbs_window
+                    ], axis=0))
+                    batch_metadata.append({
+                        'dataset': ds_name,
+                        'patient_id': patient_id_num
+                    })
+                    batch_labels.append(label)
+                    batch_pred_timestamps.append(pred_timestamps)
+                    
+                    # Process batch when full
                     if len(input_batch) == batch_size:
-                        preds, labels = run_batch(model_runner, input_batch, label_batch)
-                        all_predictions = np.concatenate([all_predictions, preds], axis=0)
-                        all_labels = np.concatenate([all_labels, labels], axis=0)
-                        all_patient_ids = np.concatenate([all_patient_ids, np.full((batch_size, labels.shape[1]), patient_id)], axis=0)
+                        preds = run_batch(model_runner, input_batch)
+                        preds = np.clip(preds, 40, 600)
+                        
+                        # Store results
+                        for pred, metadata, label, pred_ts in zip(preds, batch_metadata, batch_labels, batch_pred_timestamps):
+                            for step in range(pred_len):
+                                all_results.append({
+                                    'model': model,
+                                    'dataset': metadata['dataset'],
+                                    'patient_id': metadata['patient_id'],
+                                    'timestamp': pred_ts[step],
+                                    'prediction': pred[step],
+                                    'label': label[step]
+                                })
+                        
                         input_batch = []
-                        label_batch = []
-
+                        batch_metadata = []
+                        batch_labels = []
+                        batch_pred_timestamps = []
+        
+        # Process remaining batch
         if len(input_batch) > 0:
-            preds, labels = run_batch(model_runner, input_batch, label_batch)
-            all_predictions = np.concatenate([all_predictions, preds], axis=0)
-            all_labels = np.concatenate([all_labels, labels], axis=0)
-            all_patient_ids = np.concatenate([all_patient_ids, np.full((labels.shape[0], labels.shape[1]), patient_id)], axis=0)
-        all_predictions = np.clip(all_predictions, 40, 600)
-
-        rmses = np.sqrt(np.mean((all_labels - all_predictions)**2, axis=0))
-        apes = np.mean(np.abs(all_labels - all_predictions) / np.abs(all_labels), axis=0)
-        # Print results
-        print(
-            f'{model},{ds_name},{",".join([str(round(float(x), 2)) for x in list(rmses.round(2))])}'
-        )
-        print(
-            f'{model},{ds_name},{",".join([str(round(float(x), 2)) for x in list(apes.round(4) * 100)])}'
-        )
-        total_predictions = np.concatenate([total_predictions, all_predictions], axis=0)
-        total_labels = np.concatenate([total_labels, all_labels], axis=0)
-        total_results = np.stack([all_patient_ids, all_predictions, all_labels], axis=1)
-        np.save(f'results/{model}/{ds_name}.npy', total_results)
-
-    total_rmses = np.sqrt(np.mean((total_labels - total_predictions)**2, axis=0))
-    total_apes = np.mean(np.abs(total_labels - total_predictions) / np.abs(total_labels), axis=0)
-    print(f'Total RMSE: {total_rmses.round(2)}')
-    print(f'Total APE: {total_apes.round(4)}')
+            preds = run_batch(model_runner, input_batch)
+            preds = np.clip(preds, 40, 600)
+            
+            for pred, metadata, label, pred_ts in zip(preds, batch_metadata, batch_labels, batch_pred_timestamps):
+                for step in range(pred_len):
+                    all_results.append({
+                        'model': model,
+                        'dataset': metadata['dataset'],
+                        'patient_id': metadata['patient_id'],
+                        'timestamp': pred_ts[step],
+                        'prediction': pred[step],
+                        'label': label[step]
+                    })
+    
+    # Convert to DataFrame and save
+    results_df = pd.DataFrame(all_results)
+    
+    # Calculate and print metrics
+    if len(results_df) > 0:
+        # Overall metrics
+        overall_rmse = np.sqrt(np.mean((results_df['label'] - results_df['prediction'])**2))
+        overall_ape = np.mean(np.abs(results_df['label'] - results_df['prediction']) / 
+                             np.abs(results_df['label'])) * 100
+        print(f'Overall: RMSE={overall_rmse:.2f}, APE={overall_ape:.2f}%')
+        
+        # Save to parquet
+        os.makedirs('results', exist_ok=True)
+        output_path = f'results/{model}_results.parquet'
+        results_df.to_parquet(output_path, index=False, engine='pyarrow')
+        print(f'Saved results to {output_path}')
+    else:
+        print('No results to save')
 
 @click.command()
 @click.option('--model',
               type=str,
               default='zoh',
-              help='List of models to run the benchmark on')
+              help='Model name(s) to run (comma-separated)')
 @click.option('--subset_size',
               type=int,
               default=None,
@@ -104,24 +162,21 @@ def run_benchmark(model, ds, batch_size=1, device='cpu'):
 @click.option('--batch_size',
               type=int,
               default=1,
-              help='Batch size to run the benchmark on')
+              help='Batch size for model inference')
 @click.option('--device',
               type=str,
               default='cpu',
               help='Device to run the benchmark on')
 def main(model, subset_size=None, batch_size=1, device='cpu'):
-    ds = load_dataset()
-    if subset_size is not None:
-        ds = ds.take(subset_size)
-    models = model.split(',')
-    for model in models:
-        if not os.path.exists(f'results/{model}'):
-            os.makedirs(f'results/{model}')
-
-    for model in models:
-        run_benchmark(model, ds, batch_size=batch_size, device=device)
-
-
+    """Run benchmark on specified models."""
+    df = load_dataset(subset_size=subset_size)
+    models = [m.strip() for m in model.split(',')]
+    
+    for model_name in models:
+        print(f'\n{"="*60}')
+        print(f'Running benchmark for model: {model_name}')
+        print(f'{"="*60}')
+        run_benchmark(model_name, df, batch_size=batch_size, device=device)
 
 if __name__ == "__main__":
     main()
