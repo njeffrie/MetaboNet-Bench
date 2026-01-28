@@ -3,7 +3,7 @@ from models.zoh import ZeroOrderHold
 from models.linear import LinearRegression
 from models.lstm import LSTM
 from models.UniTS import UniTS
-from models.glucose_decoder import GlucoseDecoderModel
+from models.gluforecast import Gluforecast
 
 def get_model(name, device='cpu'):
     if name == 'gluformer':
@@ -18,7 +18,7 @@ def get_model(name, device='cpu'):
         return LSTM('njeffrie/LSTMGlucosePrediction', device)
     elif name == 'units':
         return UniTS('checkpoints/units.pth', device)
-    elif name == 'glucose_decoder':
-        return GlucoseDecoderModel(model_path='checkpoints/gluforecast.pth')
+    elif name == 'gluforecast':
+        return Gluforecast(model_path='checkpoints/gluforecast.pth')
     else:
         raise ValueError(f'Model {name} not found')
