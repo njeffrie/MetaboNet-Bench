@@ -107,7 +107,8 @@ def run_benchmark(model, df, batch_size=1, device='cpu'):
                                     'patient_id': metadata['patient_id'],
                                     'timestamp': pred_ts[step],
                                     'prediction': pred[step],
-                                    'label': label[step]
+                                    'label': label[step],
+                                    'horizon': step + 1
                                 })
                         
                         input_batch = []
@@ -128,7 +129,8 @@ def run_benchmark(model, df, batch_size=1, device='cpu'):
                         'patient_id': metadata['patient_id'],
                         'timestamp': pred_ts[step],
                         'prediction': pred[step],
-                        'label': label[step]
+                        'label': label[step],
+                        'horizon': step + 1
                     })
     
     # Convert to DataFrame and save
