@@ -2,6 +2,7 @@
 UniTS
 """
 import math
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -187,7 +188,7 @@ class DynamicLinearMlp(nn.Module):
 class LearnablePositionalEmbedding(nn.Module):
     def __init__(self, d_model, max_len=5000):
         super(LearnablePositionalEmbedding, self).__init__()
-        # Compute the positional encodings once in log space.
+        # Learnable positional embeddings, initialized with sin/cos.
         self.pe = nn.Parameter(torch.zeros(
             1, 1, max_len, d_model), requires_grad=True)
 
@@ -239,7 +240,7 @@ class SeqAttention(nn.Module):
         q, k, v = qkv.unbind(0)
         q, k = self.q_norm(q), self.k_norm(k)
         x = F.scaled_dot_product_attention(
-            q, k, v,  # attn_mask=attn_mask,
+            q, k, v,
             dropout_p=self.attn_drop.p if self.training else 0.,
         )
 
@@ -572,7 +573,7 @@ class Model(nn.Module):
 
         # Tokens settings
         self.num_task = len(configs_list)
-        self.prompt_token =nn.Parameter(torch.zeros(1, 1, args.prompt_num, args.d_model))
+        self.prompt_token = nn.Parameter(torch.zeros(1, 1, args.prompt_num, args.d_model))
         torch.nn.init.normal_(self.prompt_token, std=.02)
         self.mask_token = nn.Parameter(torch.zeros(1, 1, 1, args.d_model))
         self.cls_token = nn.Parameter(torch.zeros(1, 1, 1, args.d_model))
@@ -898,7 +899,7 @@ class Model(nn.Module):
                                        self.min_mask_ratio, self.max_mask_ratio)
             mask_repeat = mask.unsqueeze(dim=1).unsqueeze(dim=-1)
             mask_repeat = mask_repeat.repeat(1, x.shape[1], 1, x.shape[-1])
-            x = x * (1-mask_repeat) + mask_token * mask_repeat  # todo
+            x = x * (1 - mask_repeat) + mask_token * mask_repeat
 
             init_full_input = torch.cat((this_prompt, x), dim=-2)
             init_mask_prompt = self.prompt2forecat(
@@ -940,7 +941,7 @@ class Model(nn.Module):
 
             return cls_dec_out, mask_dec_out, mask_seq
         else:
-            return cls_dec_out
+            return x
 
     def forward(self, x_enc, x_mark_enc, x_dec=None, x_mark_dec=None,
                 mask=None, task_id=None, task_name=None, enable_mask=None):
@@ -963,7 +964,7 @@ class Model(nn.Module):
             return dec_out
         return None
 
-import numpy as np
+
 class UniTS:
     def __init__(self, model_path, device='cpu'):
         configs_list = ['CGM', {'task_name': 'long_term_forecast', 'seq_len': 180, 'pred_len':12}]
