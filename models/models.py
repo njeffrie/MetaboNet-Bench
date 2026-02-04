@@ -19,6 +19,6 @@ def get_model(name, device='cpu'):
     elif name == 'units':
         return UniTS('checkpoints/units.pth', device)
     elif name == 'gluforecast':
-        return Gluforecast(model_path='checkpoints/gluforecast.pth')
+        return Gluforecast(model_path='checkpoints/gluforecast.pth', device=device)
     else:
         raise ValueError(f'Model {name} not found')
