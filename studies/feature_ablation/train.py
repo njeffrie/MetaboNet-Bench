@@ -4,15 +4,21 @@ Feature ablation training script.
 Trains LSTM and UniTS models with different input feature combinations
 (CGM, CGM+insulin, CGM+carbs, CGM+insulin+carbs) on the MetaboNet train split.
 
+Hyperparameters can be tuned with Optuna (see optuna_search.py), then loaded via
+--optuna_dir or --hparams_json for final training.
+
 Usage:
     python -m studies.feature_ablation.train --data_path data/metabonet_train.parquet --device cuda
+    python -m studies.feature_ablation.train --optuna_dir studies/feature_ablation/optuna --device cuda
 """
+
+from __future__ import annotations
 
 import os
 import sys
 import time
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import click
@@ -22,13 +28,20 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
-# Ensure project root is on the path so model imports work
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from models.lstm_trainable import TrainableLSTMModel
 from models.units_trainable import build_units_model
+from studies.feature_ablation.hparams import (
+    AblationHyperParams,
+    TrainHParams,
+    LSTMHParams,
+    UniTSHParams,
+    default_ablation_hparams,
+    load_hparams_json,
+)
 
 
 FEATURE_SETS = {
@@ -40,13 +53,9 @@ FEATURE_SETS = {
 
 SEQ_LEN = 180
 PRED_LEN = 12
-MIN_SEQUENCE_LENGTH = SEQ_LEN + PRED_LEN  # 192
+MIN_SEQUENCE_LENGTH = SEQ_LEN + PRED_LEN
 STEP_SIZE = 12
 
-
-# ---------------------------------------------------------------------------
-# Dataset
-# ---------------------------------------------------------------------------
 
 class GlucoseDataset(Dataset):
     """Sliding-window dataset over preprocessed MetaboNet parquet."""
@@ -81,7 +90,6 @@ class GlucoseDataset(Dataset):
 
 
 def split_train_val(df: pd.DataFrame, val_fraction: float = 0.15, seed: int = 42):
-    """Hold out a fraction of *sequences* (not rows) for validation."""
     seq_ids = df['SequenceID'].unique()
     rng = np.random.RandomState(seed)
     rng.shuffle(seq_ids)
@@ -91,168 +99,202 @@ def split_train_val(df: pd.DataFrame, val_fraction: float = 0.15, seed: int = 42
     return df[train_mask], df[~train_mask]
 
 
-# ---------------------------------------------------------------------------
-# Model factories
-# ---------------------------------------------------------------------------
-
-def make_lstm(input_dim: int, device: str) -> nn.Module:
+def make_lstm(input_dim: int, device: str, lstm_hp: LSTMHParams) -> nn.Module:
     model = TrainableLSTMModel(
         input_dim=input_dim,
-        hidden_dim=128,
-        num_layers=2,
+        hidden_dim=lstm_hp.hidden_dim,
+        num_layers=lstm_hp.num_layers,
         pred_len=PRED_LEN,
-        dropout=0.1,
+        dropout=lstm_hp.dropout,
     )
     return model.to(device)
 
 
-def make_units(device: str) -> nn.Module:
-    model = build_units_model(seq_len=SEQ_LEN, pred_len=PRED_LEN)
+def make_units(device: str, units_hp: UniTSHParams) -> nn.Module:
+    model = build_units_model(units_hp, seq_len=SEQ_LEN, pred_len=PRED_LEN)
     return model.to(device)
 
 
-# ---------------------------------------------------------------------------
-# Training loop
-# ---------------------------------------------------------------------------
-
-@dataclass
-class TrainConfig:
-    model_type: str
-    feature_set: str
-    epochs: int = 50
-    batch_size: int = 64
-    lr: float = 1e-3
-    patience: int = 5
-    device: str = 'cpu'
-    checkpoint_dir: str = 'studies/feature_ablation/checkpoints'
+def forward_pred(model: nn.Module, model_type: str, x_batch: torch.Tensor) -> torch.Tensor:
+    if model_type == 'lstm':
+        return model(x_batch)
+    pred = model(
+        x_enc=x_batch, x_mark_enc=None,
+        task_id=0, task_name='long_term_forecast',
+    )
+    return pred[:, :, 0] if pred.ndim == 3 else pred
 
 
-def train_one(cfg: TrainConfig, train_df: pd.DataFrame, val_df: pd.DataFrame):
-    """Train a single model variant and save the best checkpoint."""
-    feature_cols = FEATURE_SETS[cfg.feature_set]
-    input_dim = len(feature_cols)
-    run_name = f'{cfg.model_type}_{cfg.feature_set}'
-
-    print(f'\n{"="*70}')
-    print(f'Training {run_name}  (features={feature_cols}, device={cfg.device})')
-    print(f'{"="*70}')
-
-    train_ds = GlucoseDataset(train_df, feature_cols)
-    val_ds = GlucoseDataset(val_df, feature_cols)
-    print(f'  Train windows: {len(train_ds)},  Val windows: {len(val_ds)}')
-
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True,
-                              num_workers=0, pin_memory=(cfg.device != 'cpu'))
-    val_loader = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False,
-                            num_workers=0, pin_memory=(cfg.device != 'cpu'))
-
-    if cfg.model_type == 'lstm':
-        model = make_lstm(input_dim, cfg.device)
-    elif cfg.model_type == 'units':
-        model = make_units(cfg.device)
-    else:
-        raise ValueError(f'Unknown model type: {cfg.model_type}')
-
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.epochs)
+def run_training_loop(
+    model: nn.Module,
+    model_type: str,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    device: str,
+    train_hp: TrainHParams,
+    max_epochs: int,
+    patience: int,
+    verbose: bool = True,
+) -> tuple[float, dict, list]:
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=train_hp.lr,
+        weight_decay=train_hp.weight_decay,
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max_epochs)
     criterion = nn.MSELoss()
 
-    os.makedirs(cfg.checkpoint_dir, exist_ok=True)
-    ckpt_path = os.path.join(cfg.checkpoint_dir, f'{run_name}.pth')
-
     best_val_loss = float('inf')
+    best_state: dict | None = None
     epochs_no_improve = 0
     history = []
-    t_start = time.time()
+    t_loop = time.time()
 
-    for epoch in range(1, cfg.epochs + 1):
-        # --- train ---
+    for epoch in range(1, max_epochs + 1):
         model.train()
         train_loss_sum, train_n = 0.0, 0
         for x_batch, y_batch in train_loader:
-            x_batch = x_batch.to(cfg.device)
-            y_batch = y_batch.to(cfg.device)
-
-            if cfg.model_type == 'lstm':
-                pred = model(x_batch)
-            else:
-                # UniTS expects (B, T, V) and returns (B, pred_len, V)
-                pred = model(
-                    x_enc=x_batch, x_mark_enc=None,
-                    task_id=0, task_name='long_term_forecast',
-                )
-                pred = pred[:, :, 0] if pred.ndim == 3 else pred
-
+            x_batch = x_batch.to(device)
+            y_batch = y_batch.to(device)
+            pred = forward_pred(model, model_type, x_batch)
             loss = criterion(pred, y_batch)
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), max_norm=train_hp.grad_clip)
             optimizer.step()
-
             train_loss_sum += loss.item() * x_batch.size(0)
             train_n += x_batch.size(0)
 
         scheduler.step()
-        train_loss = train_loss_sum / train_n
+        train_loss = train_loss_sum / max(train_n, 1)
 
-        # --- validate ---
         model.eval()
         val_loss_sum, val_n = 0.0, 0
         with torch.no_grad():
             for x_batch, y_batch in val_loader:
-                x_batch = x_batch.to(cfg.device)
-                y_batch = y_batch.to(cfg.device)
-
-                if cfg.model_type == 'lstm':
-                    pred = model(x_batch)
-                else:
-                    pred = model(
-                        x_enc=x_batch, x_mark_enc=None,
-                        task_id=0, task_name='long_term_forecast',
-                    )
-                    pred = pred[:, :, 0] if pred.ndim == 3 else pred
-
+                x_batch = x_batch.to(device)
+                y_batch = y_batch.to(device)
+                pred = forward_pred(model, model_type, x_batch)
                 val_loss_sum += criterion(pred, y_batch).item() * x_batch.size(0)
                 val_n += x_batch.size(0)
 
         val_loss = val_loss_sum / max(val_n, 1)
-        elapsed = time.time() - t_start
-
-        history.append({
-            'epoch': epoch, 'train_loss': train_loss,
-            'val_loss': val_loss, 'lr': scheduler.get_last_lr()[0],
-        })
-        print(f'  Epoch {epoch:3d}/{cfg.epochs}  '
-              f'train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  '
-              f'lr={scheduler.get_last_lr()[0]:.2e}  [{elapsed:.0f}s]')
+        row = {
+            'epoch': epoch,
+            'train_loss': train_loss,
+            'val_loss': val_loss,
+            'lr': scheduler.get_last_lr()[0],
+        }
+        history.append(row)
+        if verbose:
+            print(f"  Epoch {epoch:3d}/{max_epochs}  "
+                  f"train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  "
+                  f"lr={row['lr']:.2e}  [{time.time() - t_loop:.0f}s]")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
             epochs_no_improve = 0
-            ckpt = {
-                'model_state_dict': model.state_dict(),
-                'model_type': cfg.model_type,
-                'feature_set': cfg.feature_set,
-                'feature_cols': feature_cols,
-                'input_dim': input_dim,
-                'hidden_dim': 128,
-                'num_layers': 2,
-                'pred_len': PRED_LEN,
-                'seq_len': SEQ_LEN,
-                'best_val_loss': best_val_loss,
-                'epoch': epoch,
-            }
-            torch.save(ckpt, ckpt_path)
         else:
             epochs_no_improve += 1
-            if epochs_no_improve >= cfg.patience:
-                print(f'  Early stopping at epoch {epoch} '
-                      f'(no improvement for {cfg.patience} epochs)')
+            if epochs_no_improve >= patience:
+                if verbose:
+                    print(f'  Early stopping at epoch {epoch} '
+                          f'(no improvement for {patience} epochs)')
                 break
 
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    return best_val_loss, best_state or {}, history
+
+
+@dataclass
+class TrainJobConfig:
+    model_type: str
+    feature_set: str
+    device: str = 'cpu'
+    checkpoint_dir: str = 'studies/feature_ablation/checkpoints'
+
+
+def train_one(
+    job: TrainJobConfig,
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    ablation_hp: AblationHyperParams,
+    save_checkpoint: bool = True,
+    quiet: bool = False,
+) -> dict:
+    """Train one variant. If save_checkpoint, write best weights to checkpoint_dir."""
+    feature_cols = FEATURE_SETS[job.feature_set]
+    input_dim = len(feature_cols)
+    run_name = f'{job.model_type}_{job.feature_set}'
+    train_hp = ablation_hp.train
+
+    if not quiet:
+        print(f'\n{"="*70}')
+        print(f'Training {run_name}  (features={feature_cols}, device={job.device})')
+        print(f'{"="*70}')
+
+    train_ds = GlucoseDataset(train_df, feature_cols)
+    val_ds = GlucoseDataset(val_df, feature_cols)
+    if not quiet:
+        print(f'  Train windows: {len(train_ds)},  Val windows: {len(val_ds)}')
+
+    train_loader = DataLoader(
+        train_ds, batch_size=train_hp.batch_size, shuffle=True,
+        num_workers=0, pin_memory=(job.device != 'cpu'))
+    val_loader = DataLoader(
+        val_ds, batch_size=train_hp.batch_size, shuffle=False,
+        num_workers=0, pin_memory=(job.device != 'cpu'))
+
+    if job.model_type == 'lstm':
+        model = make_lstm(input_dim, job.device, ablation_hp.lstm)
+    elif job.model_type == 'units':
+        model = make_units(job.device, ablation_hp.units)
+    else:
+        raise ValueError(f'Unknown model type: {job.model_type}')
+
+    t_start = time.time()
+    best_val_loss, best_state, history = run_training_loop(
+        model, job.model_type, train_loader, val_loader, job.device,
+        train_hp, train_hp.max_epochs, train_hp.patience,
+        verbose=not quiet,
+    )
+
+    if best_state:
+        model.load_state_dict(best_state)
+
     total_time = time.time() - t_start
-    print(f'  Best val_loss={best_val_loss:.4f}  Total time={total_time:.1f}s')
-    print(f'  Checkpoint saved to {ckpt_path}')
+    last_epoch = history[-1]['epoch'] if history else 0
+
+    if not quiet:
+        print(f'  Best val_loss={best_val_loss:.4f}  Total time={total_time:.1f}s')
+
+    ckpt_path = os.path.join(job.checkpoint_dir, f'{run_name}.pth')
+    if save_checkpoint:
+        os.makedirs(job.checkpoint_dir, exist_ok=True)
+        ckpt = {
+            'model_state_dict': model.state_dict(),
+            'model_type': job.model_type,
+            'feature_set': job.feature_set,
+            'feature_cols': feature_cols,
+            'input_dim': input_dim,
+            'hidden_dim': ablation_hp.lstm.hidden_dim,
+            'num_layers': ablation_hp.lstm.num_layers,
+            'dropout': ablation_hp.lstm.dropout,
+            'pred_len': PRED_LEN,
+            'seq_len': SEQ_LEN,
+            'best_val_loss': best_val_loss,
+            'epoch': last_epoch,
+            'train_hparams': asdict(ablation_hp.train),
+            'lstm_hparams': asdict(ablation_hp.lstm),
+            'units_hparams': asdict(ablation_hp.units),
+        }
+        torch.save(ckpt, ckpt_path)
+        if not quiet:
+            print(f'  Checkpoint saved to {ckpt_path}')
 
     return {
         'run_name': run_name,
@@ -263,16 +305,34 @@ def train_one(cfg: TrainConfig, train_df: pd.DataFrame, val_df: pd.DataFrame):
     }
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+def _optuna_json_path(optuna_dir: str, model_type: str) -> str:
+    """One file per architecture: best_lstm.json, best_units.json (shared across feature ablations)."""
+    return os.path.join(optuna_dir, f'best_{model_type}.json')
+
+
+def load_hparams_for_run(
+    model_type: str,
+    base_hp: AblationHyperParams,
+    optuna_dir: str | None,
+    hparams_json: str | None,
+) -> AblationHyperParams:
+    """Load Optuna JSON for this model type only (same hparams for all feature ablations)."""
+    if hparams_json:
+        return load_hparams_json(hparams_json)
+    if optuna_dir:
+        path = _optuna_json_path(optuna_dir, model_type)
+        if os.path.isfile(path):
+            return load_hparams_json(path)
+    return base_hp
+
 
 @click.command()
 @click.option('--data_path', type=str, default='data/metabonet_train.parquet',
               help='Path to the preprocessed train parquet')
 @click.option('--device', type=str, default='cpu',
               help='Device to train on (cpu, cuda, mps)')
-@click.option('--epochs', type=int, default=50)
+@click.option('--epochs', type=int, default=50,
+              help='Max epochs (used when not loading Optuna hparams)')
 @click.option('--batch_size', type=int, default=64)
 @click.option('--lr', type=float, default=1e-3)
 @click.option('--patience', type=int, default=5)
@@ -281,8 +341,12 @@ def train_one(cfg: TrainConfig, train_df: pd.DataFrame, val_df: pd.DataFrame):
 @click.option('--feature_sets', type=str,
               default='cgm,cgm_insulin,cgm_carbs,cgm_insulin_carbs',
               help='Comma-separated feature sets to ablate')
-def main(data_path, device, epochs, batch_size, lr, patience, models, feature_sets):
-    """Train all model/feature-set combinations for the feature ablation study."""
+@click.option('--optuna_dir', type=str, default=None,
+              help='Directory with best_lstm.json / best_units.json from optuna_search (shared per model type)')
+@click.option('--hparams_json', type=str, default=None,
+              help='Single ablation hyperparameter JSON (trains one combo only)')
+def main(data_path, device, epochs, batch_size, lr, patience, models,
+         feature_sets, optuna_dir, hparams_json):
     print(f'Loading data from {data_path} ...')
     df = pd.read_parquet(data_path)
     print(f'  Loaded {len(df)} rows, '
@@ -293,25 +357,36 @@ def main(data_path, device, epochs, batch_size, lr, patience, models, feature_se
     print(f'  Train: {train_df["SequenceID"].nunique()} sequences, '
           f'Val: {val_df["SequenceID"].nunique()} sequences')
 
+    base = default_ablation_hparams()
+    base.train.max_epochs = epochs
+    base.train.batch_size = batch_size
+    base.train.lr = lr
+    base.train.patience = patience
+
     model_types = [m.strip() for m in models.split(',')]
     feat_sets = [f.strip() for f in feature_sets.split(',')]
 
-    summaries = []
-    for model_type in model_types:
-        for feat_set in feat_sets:
-            cfg = TrainConfig(
-                model_type=model_type,
-                feature_set=feat_set,
-                epochs=epochs,
-                batch_size=batch_size,
-                lr=lr,
-                patience=patience,
-                device=device,
-            )
-            result = train_one(cfg, train_df, val_df)
-            summaries.append(result)
+    if hparams_json:
+        ablation_hp = load_hparams_json(hparams_json)
+        if len(model_types) != 1 or len(feat_sets) != 1:
+            raise ValueError('--hparams_json requires exactly one model and one feature_set')
+        ablation_hp.train.max_epochs = epochs
+        summaries = [train_one(
+            TrainJobConfig(model_type=model_types[0], feature_set=feat_sets[0], device=device),
+            train_df, val_df, ablation_hp,
+        )]
+    else:
+        summaries = []
+        for model_type in model_types:
+            hp = load_hparams_for_run(model_type, base, optuna_dir, None)
+            if optuna_dir:
+                hp.train.max_epochs = epochs
+            for feat_set in feat_sets:
+                summaries.append(train_one(
+                    TrainJobConfig(model_type=model_type, feature_set=feat_set, device=device),
+                    train_df, val_df, hp,
+                ))
 
-    # Print summary table
     print(f'\n{"="*70}')
     print('TRAINING SUMMARY')
     print(f'{"="*70}')
