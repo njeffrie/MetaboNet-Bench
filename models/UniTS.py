@@ -535,7 +535,7 @@ class ForecastHead(nn.Module):
         self.patch_len = patch_len
         self.stride = stride
         self.pos_proj = DynamicLinear(
-            in_features=128, out_features=128, fixed_in=prefix_token_length)
+            in_features=d_model, out_features=d_model, fixed_in=prefix_token_length)
 
     def forward(self, x_full, pred_len, token_len):
         x_full = self.proj_in(x_full)
@@ -623,7 +623,8 @@ class Model(nn.Module):
         self.patch_embeddings = PatchEmbedding(
             args.d_model, args.patch_len, args.stride, args.stride, args.dropout)
         self.position_embedding = LearnablePositionalEmbedding(args.d_model)
-        self.prompt2forecat = DynamicLinear(128, 128, fixed_in=args.prompt_num)
+        self.prompt2forecat = DynamicLinear(
+            args.d_model, args.d_model, fixed_in=args.prompt_num)
 
         # basic blocks
         self.block_num = args.e_layers
