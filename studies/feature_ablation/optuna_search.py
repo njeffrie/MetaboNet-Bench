@@ -1,7 +1,7 @@
 """
-Optuna hyperparameter search for feature ablation (one study per model × feature set).
+Optuna hyperparameter search for feature ablation (one study per model type).
 
-1) Run this script to produce best_<model>_<feature_set>.json under --out_dir
+1) Run this script to produce best_<model>.json under --out_dir (shared across feature ablations)
 2) Run training with: python -m studies.feature_ablation.train --optuna_dir <out_dir> ...
 
 Example:
@@ -36,6 +36,7 @@ from studies.feature_ablation.train import (
     make_lstm,
     make_units,
     run_training_loop,
+    get_dataloader_kwargs,
 )
 from studies.feature_ablation.hparams import (
     AblationHyperParams,
@@ -155,6 +156,7 @@ def run_one_study(
     seed: int,
     out_dir: str,
     study_name: str | None,
+    num_workers: int | None,
 ) -> None:
     feature_cols = FEATURE_SETS[feature_set]
     input_dim = len(feature_cols)
@@ -173,10 +175,10 @@ def run_one_study(
 
         train_loader = DataLoader(
             train_ds, batch_size=hp.train.batch_size, shuffle=True,
-            num_workers=0, pin_memory=(device != 'cpu'))
+            num_workers=num_workers, pin_memory=(device != 'cpu'))
         val_loader = DataLoader(
             val_ds, batch_size=hp.train.batch_size, shuffle=False,
-            num_workers=0, pin_memory=(device != 'cpu'))
+            num_workers=num_workers, pin_memory=(device != 'cpu'))
 
         best_val_loss, _, _ = run_training_loop(
             model, model_type, train_loader, val_loader, device,
@@ -194,7 +196,7 @@ def run_one_study(
         study.best_trial.params, model_type, max_epochs_per_trial)
 
     os.makedirs(out_dir, exist_ok=True)
-    json_path = os.path.join(out_dir, f'best_{model_type}_{feature_set}.json')
+    json_path = os.path.join(out_dir, f'best_{model_type}.json')
     save_hparams_json(best_hp, json_path)
 
     meta = {
@@ -206,11 +208,11 @@ def run_one_study(
         'max_epochs_per_trial': max_epochs_per_trial,
         'hparams_file': json_path,
     }
-    meta_path = os.path.join(out_dir, f'meta_{model_type}_{feature_set}.json')
+    meta_path = os.path.join(out_dir, f'meta_{model_type}.json')
     with open(meta_path, 'w') as f:
         json.dump(meta, f, indent=2)
 
-    print(f'\n[{model_type} / {feature_set}] best_val={study.best_value:.6f}')
+    print(f'\n[{model_type}] tune_feature_set={feature_set} best_val={study.best_value:.6f}')
     print(f'  Saved {json_path}')
     print(f'  Meta {meta_path}')
 
@@ -228,9 +230,11 @@ def run_one_study(
 @click.option('--out_dir', type=str, default='studies/feature_ablation/optuna')
 @click.option('--study_name', type=str, default=None,
               help='Optional prefix for Optuna study names')
+@click.option('--num_workers', type=int, default=None,
+              help='DataLoader worker processes (default: auto; e.g. 4–8 on MPS/CUDA)')
 def main(
     data_path, device, n_trials, max_epochs_per_trial, seed, models,
-    tune_feature_set, out_dir, study_name,
+    tune_feature_set, out_dir, study_name, num_workers,
 ):
     random.seed(seed)
     np.random.seed(seed)
@@ -251,7 +255,7 @@ def main(
         sn = f'{study_name}_{mt}' if study_name else None
         run_one_study(
             mt, fs, train_df, val_df, device,
-            n_trials, max_epochs_per_trial, seed, out_dir, sn,
+            n_trials, max_epochs_per_trial, seed, out_dir, sn, num_workers,
         )
 
     print('\nDone. Run final training with:')
