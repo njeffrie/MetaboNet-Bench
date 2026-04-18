@@ -221,15 +221,16 @@ def run_one_study(
 @click.option('--n_trials', type=int, default=30)
 @click.option('--max_epochs_per_trial', type=int, default=20)
 @click.option('--seed', type=int, default=42)
-@click.option('--models', type=str, default='lstm,units')
-@click.option('--feature_sets', type=str,
-              default='cgm,cgm_insulin,cgm_carbs,cgm_insulin_carbs')
+@click.option('--models', type=str, default='lstm,units',
+              help='Model types to tune (one study each)')
+@click.option('--tune_feature_set', type=str, default='cgm_insulin_carbs',
+              help='Feature set used as the tuning objective')
 @click.option('--out_dir', type=str, default='studies/feature_ablation/optuna')
 @click.option('--study_name', type=str, default=None,
-              help='Optional Optuna study name (per combo, suffixed automatically)')
+              help='Optional prefix for Optuna study names')
 def main(
     data_path, device, n_trials, max_epochs_per_trial, seed, models,
-    feature_sets, out_dir, study_name,
+    tune_feature_set, out_dir, study_name,
 ):
     random.seed(seed)
     np.random.seed(seed)
