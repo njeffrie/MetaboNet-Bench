@@ -56,6 +56,37 @@ PRED_LEN = 12
 MIN_SEQUENCE_LENGTH = SEQ_LEN + PRED_LEN
 STEP_SIZE = 12
 
+_CUDNN_BENCHMARK_SET = False
+
+
+def get_dataloader_kwargs(device: str, num_workers: int | None = None) -> dict:
+    """Parallel workers + pinned memory so the GPU is not starved waiting on the CPU."""
+    dev = str(device)
+    if dev == 'cpu':
+        return {'num_workers': 0, 'pin_memory': False}
+    if dev == 'mps':
+        nw = num_workers if num_workers is not None else min(4, (os.cpu_count() or 1))
+        nw = max(0, nw)
+        kw: dict = {'num_workers': nw, 'pin_memory': False}
+        if nw > 0:
+            kw['persistent_workers'] = True
+            kw['prefetch_factor'] = 2
+        return kw
+    nw = num_workers if num_workers is not None else min(8, (os.cpu_count() or 4))
+    nw = max(0, nw)
+    kw = {'num_workers': nw, 'pin_memory': True}
+    if nw > 0:
+        kw['persistent_workers'] = True
+        kw['prefetch_factor'] = 2
+    return kw
+
+
+def _maybe_enable_cudnn_benchmark(device: str) -> None:
+    global _CUDNN_BENCHMARK_SET
+    if str(device).startswith('cuda') and not _CUDNN_BENCHMARK_SET:
+        torch.backends.cudnn.benchmark = True
+        _CUDNN_BENCHMARK_SET = True
+
 
 class GlucoseDataset(Dataset):
     """Sliding-window dataset over preprocessed MetaboNet parquet."""
@@ -136,6 +167,8 @@ def run_training_loop(
     patience: int,
     verbose: bool = True,
 ) -> tuple[float, dict, list]:
+    _maybe_enable_cudnn_benchmark(device)
+    non_blocking = str(device).startswith('cuda')
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=train_hp.lr,
@@ -155,8 +188,8 @@ def run_training_loop(
         model.train()
         train_loss_sum, train_n = 0.0, 0
         for x_batch, y_batch in train_loader:
-            x_batch = x_batch.to(device)
-            y_batch = y_batch.to(device)
+            x_batch = x_batch.to(device, non_blocking=non_blocking)
+            y_batch = y_batch.to(device, non_blocking=non_blocking)
             pred = forward_pred(model, model_type, x_batch)
             loss = criterion(pred, y_batch)
             optimizer.zero_grad()
@@ -174,8 +207,8 @@ def run_training_loop(
         val_loss_sum, val_n = 0.0, 0
         with torch.no_grad():
             for x_batch, y_batch in val_loader:
-                x_batch = x_batch.to(device)
-                y_batch = y_batch.to(device)
+                x_batch = x_batch.to(device, non_blocking=non_blocking)
+                y_batch = y_batch.to(device, non_blocking=non_blocking)
                 pred = forward_pred(model, model_type, x_batch)
                 val_loss_sum += criterion(pred, y_batch).item() * x_batch.size(0)
                 val_n += x_batch.size(0)
@@ -216,6 +249,7 @@ class TrainJobConfig:
     feature_set: str
     device: str = 'cpu'
     checkpoint_dir: str = 'studies/feature_ablation/checkpoints'
+    num_workers: int | None = None
 
 
 def train_one(
@@ -242,12 +276,11 @@ def train_one(
     if not quiet:
         print(f'  Train windows: {len(train_ds)},  Val windows: {len(val_ds)}')
 
+    dl_kw = get_dataloader_kwargs(job.device, job.num_workers)
     train_loader = DataLoader(
-        train_ds, batch_size=train_hp.batch_size, shuffle=True,
-        num_workers=0, pin_memory=(job.device != 'cpu'))
+        train_ds, batch_size=train_hp.batch_size, shuffle=True, **dl_kw)
     val_loader = DataLoader(
-        val_ds, batch_size=train_hp.batch_size, shuffle=False,
-        num_workers=0, pin_memory=(job.device != 'cpu'))
+        val_ds, batch_size=train_hp.batch_size, shuffle=False, **dl_kw)
 
     if job.model_type == 'lstm':
         model = make_lstm(input_dim, job.device, ablation_hp.lstm)
@@ -345,8 +378,10 @@ def load_hparams_for_run(
               help='Directory with best_lstm.json / best_units.json from optuna_search (shared per model type)')
 @click.option('--hparams_json', type=str, default=None,
               help='Single ablation hyperparameter JSON (trains one combo only)')
+@click.option('--num_workers', type=int, default=None,
+              help='DataLoader worker processes (default: auto by device; 0 forces single-threaded loading)')
 def main(data_path, device, epochs, batch_size, lr, patience, models,
-         feature_sets, optuna_dir, hparams_json):
+         feature_sets, optuna_dir, hparams_json, num_workers):
     print(f'Loading data from {data_path} ...')
     df = pd.read_parquet(data_path)
     print(f'  Loaded {len(df)} rows, '
@@ -372,7 +407,10 @@ def main(data_path, device, epochs, batch_size, lr, patience, models,
             raise ValueError('--hparams_json requires exactly one model and one feature_set')
         ablation_hp.train.max_epochs = epochs
         summaries = [train_one(
-            TrainJobConfig(model_type=model_types[0], feature_set=feat_sets[0], device=device),
+            TrainJobConfig(
+                model_type=model_types[0], feature_set=feat_sets[0],
+                device=device, num_workers=num_workers,
+            ),
             train_df, val_df, ablation_hp,
         )]
     else:
@@ -383,7 +421,10 @@ def main(data_path, device, epochs, batch_size, lr, patience, models,
                 hp.train.max_epochs = epochs
             for feat_set in feat_sets:
                 summaries.append(train_one(
-                    TrainJobConfig(model_type=model_type, feature_set=feat_set, device=device),
+                    TrainJobConfig(
+                        model_type=model_type, feature_set=feat_set,
+                        device=device, num_workers=num_workers,
+                    ),
                     train_df, val_df, hp,
                 ))
 
