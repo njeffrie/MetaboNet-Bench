@@ -173,12 +173,11 @@ def run_one_study(
         else:
             raise ValueError(model_type)
 
+        dl_kw = get_dataloader_kwargs(device, num_workers)
         train_loader = DataLoader(
-            train_ds, batch_size=hp.train.batch_size, shuffle=True,
-            num_workers=num_workers, pin_memory=(device != 'cpu'))
+            train_ds, batch_size=hp.train.batch_size, shuffle=True, **dl_kw)
         val_loader = DataLoader(
-            val_ds, batch_size=hp.train.batch_size, shuffle=False,
-            num_workers=num_workers, pin_memory=(device != 'cpu'))
+            val_ds, batch_size=hp.train.batch_size, shuffle=False, **dl_kw)
 
         best_val_loss, _, _ = run_training_loop(
             model, model_type, train_loader, val_loader, device,
