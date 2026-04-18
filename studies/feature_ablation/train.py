@@ -70,14 +70,14 @@ def get_dataloader_kwargs(device: str, num_workers: int | None = None) -> dict:
         kw: dict = {'num_workers': nw, 'pin_memory': False}
         if nw > 0:
             kw['persistent_workers'] = True
-            kw['prefetch_factor'] = 2
+            kw['prefetch_factor'] = 4
         return kw
     nw = num_workers if num_workers is not None else min(8, (os.cpu_count() or 4))
     nw = max(0, nw)
     kw = {'num_workers': nw, 'pin_memory': True}
     if nw > 0:
         kw['persistent_workers'] = True
-        kw['prefetch_factor'] = 2
+        kw['prefetch_factor'] = 4
     return kw
 
 
@@ -186,34 +186,36 @@ def run_training_loop(
 
     for epoch in range(1, max_epochs + 1):
         model.train()
-        train_loss_sum, train_n = 0.0, 0
+        train_loss_acc = torch.zeros(1, device=device, dtype=torch.float32)
+        train_n = 0
         for x_batch, y_batch in train_loader:
             x_batch = x_batch.to(device, non_blocking=non_blocking)
             y_batch = y_batch.to(device, non_blocking=non_blocking)
             pred = forward_pred(model, model_type, x_batch)
             loss = criterion(pred, y_batch)
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(
                 model.parameters(), max_norm=train_hp.grad_clip)
             optimizer.step()
-            train_loss_sum += loss.item() * x_batch.size(0)
+            train_loss_acc += loss.detach() * x_batch.size(0)
             train_n += x_batch.size(0)
 
         scheduler.step()
-        train_loss = train_loss_sum / max(train_n, 1)
+        train_loss = (train_loss_acc / max(train_n, 1)).item()
 
         model.eval()
-        val_loss_sum, val_n = 0.0, 0
+        val_loss_acc = torch.zeros(1, device=device, dtype=torch.float32)
+        val_n = 0
         with torch.no_grad():
             for x_batch, y_batch in val_loader:
                 x_batch = x_batch.to(device, non_blocking=non_blocking)
                 y_batch = y_batch.to(device, non_blocking=non_blocking)
                 pred = forward_pred(model, model_type, x_batch)
-                val_loss_sum += criterion(pred, y_batch).item() * x_batch.size(0)
+                val_loss_acc += criterion(pred, y_batch) * x_batch.size(0)
                 val_n += x_batch.size(0)
 
-        val_loss = val_loss_sum / max(val_n, 1)
+        val_loss = (val_loss_acc / max(val_n, 1)).item()
         row = {
             'epoch': epoch,
             'train_loss': train_loss,
