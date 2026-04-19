@@ -9,7 +9,8 @@ Hyperparameters can be tuned with Optuna (see optuna_search.py), then loaded via
 
 Usage:
     python -m studies.feature_ablation.train --data_path data/metabonet_train.parquet --device cuda
-    python -m studies.feature_ablation.train --optuna_dir studies/feature_ablation/optuna --device cuda
+    python -m studies.feature_ablation.train --optuna_dir studies/feature_ablation/optuna \\
+        --device cuda --amp --tf32
 """
 
 from __future__ import annotations
@@ -23,9 +24,11 @@ from pathlib import Path
 
 import click
 import numpy as np
+import optuna
 import pandas as pd
 import torch
 import torch.nn as nn
+from torch import amp as torch_amp
 from torch.utils.data import Dataset, DataLoader
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -57,6 +60,19 @@ MIN_SEQUENCE_LENGTH = SEQ_LEN + PRED_LEN
 STEP_SIZE = 12
 
 _CUDNN_BENCHMARK_SET = False
+_TF32_CONFIGURED = False
+
+
+def _maybe_configure_tf32(device: str, use_tf32: bool) -> None:
+    """Enable TF32 for matmul on CUDA (Hopper/Ada-friendly); no-op if disabled."""
+    global _TF32_CONFIGURED
+    if not use_tf32 or _TF32_CONFIGURED:
+        return
+    if str(device).startswith('cuda'):
+        torch.set_float32_matmul_precision('high')
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    _TF32_CONFIGURED = True
 
 
 def get_dataloader_kwargs(device: str, num_workers: int | None = None) -> dict:
@@ -70,14 +86,14 @@ def get_dataloader_kwargs(device: str, num_workers: int | None = None) -> dict:
         kw: dict = {'num_workers': nw, 'pin_memory': False}
         if nw > 0:
             kw['persistent_workers'] = True
-            kw['prefetch_factor'] = 4
+            kw['prefetch_factor'] = 2
         return kw
     nw = num_workers if num_workers is not None else min(8, (os.cpu_count() or 4))
     nw = max(0, nw)
     kw = {'num_workers': nw, 'pin_memory': True}
     if nw > 0:
         kw['persistent_workers'] = True
-        kw['prefetch_factor'] = 4
+        kw['prefetch_factor'] = 2
     return kw
 
 
@@ -166,9 +182,20 @@ def run_training_loop(
     max_epochs: int,
     patience: int,
     verbose: bool = True,
+    use_amp: bool = False,
+    use_tf32: bool = False,
+    optuna_trial: optuna.Trial | None = None,
 ) -> tuple[float, dict, list]:
     _maybe_enable_cudnn_benchmark(device)
+    _maybe_configure_tf32(device, use_tf32)
     non_blocking = str(device).startswith('cuda')
+    use_autocast = bool(use_amp and str(device).startswith('cuda'))
+    amp_dtype = torch.bfloat16
+    if use_autocast and not torch.cuda.is_bf16_supported():
+        amp_dtype = torch.float16
+    use_fp16_scaler = use_autocast and amp_dtype == torch.float16
+    scaler = torch_amp.GradScaler('cuda', enabled=use_fp16_scaler)
+
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=train_hp.lr,
@@ -186,36 +213,53 @@ def run_training_loop(
 
     for epoch in range(1, max_epochs + 1):
         model.train()
-        train_loss_acc = torch.zeros(1, device=device, dtype=torch.float32)
-        train_n = 0
+        train_loss_sum, train_n = 0.0, 0
         for x_batch, y_batch in train_loader:
             x_batch = x_batch.to(device, non_blocking=non_blocking)
             y_batch = y_batch.to(device, non_blocking=non_blocking)
-            pred = forward_pred(model, model_type, x_batch)
-            loss = criterion(pred, y_batch)
             optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(
-                model.parameters(), max_norm=train_hp.grad_clip)
-            optimizer.step()
-            train_loss_acc += loss.detach() * x_batch.size(0)
+            if use_autocast:
+                with torch.autocast(device_type='cuda', dtype=amp_dtype):
+                    pred = forward_pred(model, model_type, x_batch)
+                    loss = criterion(pred, y_batch)
+            else:
+                pred = forward_pred(model, model_type, x_batch)
+                loss = criterion(pred, y_batch)
+            if use_fp16_scaler:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), max_norm=train_hp.grad_clip)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), max_norm=train_hp.grad_clip)
+                optimizer.step()
+            train_loss_sum += loss.item() * x_batch.size(0)
             train_n += x_batch.size(0)
 
         scheduler.step()
-        train_loss = (train_loss_acc / max(train_n, 1)).item()
+        train_loss = train_loss_sum / max(train_n, 1)
 
         model.eval()
-        val_loss_acc = torch.zeros(1, device=device, dtype=torch.float32)
-        val_n = 0
+        val_loss_sum, val_n = 0.0, 0
         with torch.no_grad():
             for x_batch, y_batch in val_loader:
                 x_batch = x_batch.to(device, non_blocking=non_blocking)
                 y_batch = y_batch.to(device, non_blocking=non_blocking)
-                pred = forward_pred(model, model_type, x_batch)
-                val_loss_acc += criterion(pred, y_batch) * x_batch.size(0)
+                if use_autocast:
+                    with torch.autocast(device_type='cuda', dtype=amp_dtype):
+                        pred = forward_pred(model, model_type, x_batch)
+                        v = criterion(pred, y_batch).item()
+                else:
+                    pred = forward_pred(model, model_type, x_batch)
+                    v = criterion(pred, y_batch).item()
+                val_loss_sum += v * x_batch.size(0)
                 val_n += x_batch.size(0)
 
-        val_loss = (val_loss_acc / max(val_n, 1)).item()
+        val_loss = val_loss_sum / max(val_n, 1)
         row = {
             'epoch': epoch,
             'train_loss': train_loss,
@@ -227,6 +271,11 @@ def run_training_loop(
             print(f"  Epoch {epoch:3d}/{max_epochs}  "
                   f"train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  "
                   f"lr={row['lr']:.2e}  [{time.time() - t_loop:.0f}s]")
+
+        if optuna_trial is not None:
+            optuna_trial.report(val_loss, step=epoch)
+            if optuna_trial.should_prune():
+                raise optuna.TrialPruned()
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -252,6 +301,8 @@ class TrainJobConfig:
     device: str = 'cpu'
     checkpoint_dir: str = 'studies/feature_ablation/checkpoints'
     num_workers: int | None = None
+    use_amp: bool = False
+    use_tf32: bool = False
 
 
 def train_one(
@@ -296,6 +347,8 @@ def train_one(
         model, job.model_type, train_loader, val_loader, job.device,
         train_hp, train_hp.max_epochs, train_hp.patience,
         verbose=not quiet,
+        use_amp=job.use_amp,
+        use_tf32=job.use_tf32,
     )
 
     if best_state:
@@ -382,8 +435,12 @@ def load_hparams_for_run(
               help='Single ablation hyperparameter JSON (trains one combo only)')
 @click.option('--num_workers', type=int, default=None,
               help='DataLoader worker processes (default: auto by device; 0 forces single-threaded loading)')
+@click.option('--amp', is_flag=True, default=False,
+              help='CUDA AMP (bf16 when supported; else fp16 + GradScaler)')
+@click.option('--tf32', is_flag=True, default=False,
+              help='TF32 matmul on CUDA (recommended on H200 with fp32 matmuls)')
 def main(data_path, device, epochs, batch_size, lr, patience, models,
-         feature_sets, optuna_dir, hparams_json, num_workers):
+         feature_sets, optuna_dir, hparams_json, num_workers, amp, tf32):
     print(f'Loading data from {data_path} ...')
     df = pd.read_parquet(data_path)
     print(f'  Loaded {len(df)} rows, '
@@ -412,6 +469,7 @@ def main(data_path, device, epochs, batch_size, lr, patience, models,
             TrainJobConfig(
                 model_type=model_types[0], feature_set=feat_sets[0],
                 device=device, num_workers=num_workers,
+                use_amp=amp, use_tf32=tf32,
             ),
             train_df, val_df, ablation_hp,
         )]
@@ -426,6 +484,7 @@ def main(data_path, device, epochs, batch_size, lr, patience, models,
                     TrainJobConfig(
                         model_type=model_type, feature_set=feat_set,
                         device=device, num_workers=num_workers,
+                        use_amp=amp, use_tf32=tf32,
                     ),
                     train_df, val_df, hp,
                 ))
