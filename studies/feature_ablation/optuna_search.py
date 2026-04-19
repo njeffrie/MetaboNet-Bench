@@ -7,7 +7,8 @@ Optuna hyperparameter search for feature ablation (one study per model type).
 Example:
     python -m studies.feature_ablation.optuna_search \\
         --data_path data/metabonet_train.parquet --device cuda --n_trials 30 \\
-        --max_epochs_per_trial 20 --out_dir studies/feature_ablation/optuna
+        --max_epochs_per_trial 20 --out_dir studies/feature_ablation/optuna \\
+        --amp --tf32
 """
 
 from __future__ import annotations
@@ -53,7 +54,8 @@ def _sample_lstm_hparams(trial: optuna.Trial, max_epochs: int) -> AblationHyperP
     return AblationHyperParams(
         train=TrainHParams(
             lr=trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            batch_size=trial.suggest_categorical('batch_size', [32, 64, 128]),
+            batch_size=trial.suggest_categorical(
+                'batch_size', [32, 64, 128, 256, 512]),
             weight_decay=trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True),
             max_epochs=max_epochs,
             patience=trial.suggest_int('patience', 3, 7),
@@ -79,7 +81,8 @@ def _sample_units_hparams(trial: optuna.Trial, max_epochs: int) -> AblationHyper
     return AblationHyperParams(
         train=TrainHParams(
             lr=trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            batch_size=trial.suggest_categorical('batch_size', [16, 32, 64]),
+            batch_size=trial.suggest_categorical(
+                'batch_size', [16, 32, 64, 128, 256]),
             weight_decay=trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True),
             max_epochs=max_epochs,
             patience=trial.suggest_int('patience', 3, 7),
@@ -157,6 +160,11 @@ def run_one_study(
     out_dir: str,
     study_name: str | None,
     num_workers: int | None,
+    use_amp: bool = False,
+    use_tf32: bool = False,
+    use_pruner: bool = True,
+    pruner_n_startup_trials: int = 5,
+    pruner_n_warmup_steps: int = 3,
 ) -> None:
     feature_cols = FEATURE_SETS[feature_set]
     input_dim = len(feature_cols)
@@ -179,16 +187,31 @@ def run_one_study(
         val_loader = DataLoader(
             val_ds, batch_size=hp.train.batch_size, shuffle=False, **dl_kw)
 
+        trial_for_loop = trial if use_pruner else None
         best_val_loss, _, _ = run_training_loop(
             model, model_type, train_loader, val_loader, device,
             hp.train, hp.train.max_epochs, hp.train.patience,
             verbose=False,
+            use_amp=use_amp,
+            use_tf32=use_tf32,
+            optuna_trial=trial_for_loop,
         )
         return float(best_val_loss)
 
     sampler = optuna.samplers.TPESampler(seed=seed)
+    pruner: optuna.pruners.BasePruner | None = None
+    if use_pruner:
+        pruner = optuna.pruners.MedianPruner(
+            n_startup_trials=pruner_n_startup_trials,
+            n_warmup_steps=pruner_n_warmup_steps,
+        )
     study_id = study_name or f'{model_type}_{feature_set}'
-    study = optuna.create_study(direction='minimize', sampler=sampler, study_name=study_id)
+    study = optuna.create_study(
+        direction='minimize',
+        sampler=sampler,
+        pruner=pruner,
+        study_name=study_id,
+    )
     study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
 
     best_hp = _ablation_from_frozen_params(
@@ -206,6 +229,11 @@ def run_one_study(
         'n_trials': n_trials,
         'max_epochs_per_trial': max_epochs_per_trial,
         'hparams_file': json_path,
+        'use_amp': use_amp,
+        'use_tf32': use_tf32,
+        'median_pruner': use_pruner,
+        'pruner_n_startup_trials': pruner_n_startup_trials,
+        'pruner_n_warmup_steps': pruner_n_warmup_steps,
     }
     meta_path = os.path.join(out_dir, f'meta_{model_type}.json')
     with open(meta_path, 'w') as f:
@@ -231,9 +259,20 @@ def run_one_study(
               help='Optional prefix for Optuna study names')
 @click.option('--num_workers', type=int, default=None,
               help='DataLoader worker processes (default: auto; e.g. 4–8 on MPS/CUDA)')
+@click.option('--amp', is_flag=True, default=False,
+              help='CUDA AMP (bf16 when supported)')
+@click.option('--tf32', is_flag=True, default=False,
+              help='TF32 matmul on CUDA (e.g. H200)')
+@click.option('--no-pruner', is_flag=True, default=False,
+              help='Disable MedianPruner (full epochs every trial)')
+@click.option('--pruner-n-startup-trials', type=int, default=5,
+              help='MedianPruner: trials before pruning')
+@click.option('--pruner-n-warmup-steps', type=int, default=3,
+              help='MedianPruner: epochs (steps) before pruning')
 def main(
     data_path, device, n_trials, max_epochs_per_trial, seed, models,
     tune_feature_set, out_dir, study_name, num_workers,
+    amp, tf32, no_pruner, pruner_n_startup_trials, pruner_n_warmup_steps,
 ):
     random.seed(seed)
     np.random.seed(seed)
@@ -255,11 +294,22 @@ def main(
         run_one_study(
             mt, fs, train_df, val_df, device,
             n_trials, max_epochs_per_trial, seed, out_dir, sn, num_workers,
+            use_amp=amp,
+            use_tf32=tf32,
+            use_pruner=not no_pruner,
+            pruner_n_startup_trials=pruner_n_startup_trials,
+            pruner_n_warmup_steps=pruner_n_warmup_steps,
         )
 
+    train_flags = []
+    if amp:
+        train_flags.append('--amp')
+    if tf32:
+        train_flags.append('--tf32')
+    extra = (' \\\n    ' + ' '.join(train_flags)) if train_flags else ''
     print('\nDone. Run final training with:')
     print(f'  python -m studies.feature_ablation.train --optuna_dir {out_dir} '
-          f'--data_path {data_path} --device {device}')
+          f'--data_path {data_path} --device {device}{extra}')
 
 
 if __name__ == '__main__':
