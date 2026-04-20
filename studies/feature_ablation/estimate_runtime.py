@@ -3,8 +3,17 @@ Rough wall-clock estimate for Optuna (two studies) + ablation training on one GP
 
 Plug in sec/epoch from bench.py (or your own timings). Uses average epochs per
 trial when early stopping is enabled.
-If architecture params are fixed in optuna_search.py, this still applies and
-typically reduces runtime variance across trials.
+
+Assumptions (aligned with studies/feature_ablation/optuna_search.py):
+- Optuna searches only train hyperparameters:
+  lr, batch_size, weight_decay, patience, grad_clip.
+- LSTM and UniTS architecture and other model fields use default_ablation_hparams()
+  (see studies/feature_ablation/hparams.py).
+- Expected trial-to-trial variance is mostly from batch_size (and optimizer steps),
+  not from architecture sampling.
+
+Use bench.py timings taken with the same defaults and AMP/TF32 flags you will use
+in production; otherwise scale sec/epoch manually.
 
 Example:
     python -m studies.feature_ablation.estimate_runtime \\
@@ -47,7 +56,7 @@ import click
 @click.option('--margin-frac', type=float, default=0.15,
               help='Safety margin on total time (checkpoint I/O, variance)')
 @click.option('--bench-json', type=str, default=None,
-              help='Optional JSON from bench.py (reads lstm/units sec_per_epoch)')
+              help='JSON from bench.py (sec/epoch; use defaults-matched bench for optuna_search)')
 @click.option('--target-wall-hours', type=float, default=None,
               help='If set, warn vs this wall-clock budget (after margin). Prints suggested '
                    'symmetric --n-trials when feasible.')
@@ -78,6 +87,8 @@ def main(
         units_sec_per_epoch = float(b['units']['sec_per_epoch'])
         print(f'Loaded bench JSON: lstm {lstm_sec_per_epoch:.4f}s/ep, '
               f'UniTS {units_sec_per_epoch:.4f}s/ep')
+        if b.get('assumption'):
+            print(f'  bench assumption: {b["assumption"]}')
     elif lstm_sec_per_epoch is None or units_sec_per_epoch is None:
         raise click.UsageError(
             'Provide --lstm-sec-per-epoch and --units-sec-per-epoch, or --bench-json'
@@ -120,6 +131,13 @@ def main(
     )
     print(f'Raw sum:            {_fmt(raw_total)}')
     print(f'With margin {margin_frac:.0%}: {_fmt(total)}  ({total/3600.0:.2f} h)\n')
+
+    print(
+        'Assumption: sec/epoch matches default model hparams + train-only Optuna search '
+        '(lr, batch_size, weight_decay, patience, grad_clip). '
+        'Trials differ mainly by batch_size; regenerate bench.json if you change '
+        'hparams.py or search space.\n'
+    )
 
     # Budget suggestion: buffered total <= target_wall_hours * 3600
     if target_wall_hours is not None and target_wall_hours > 0:
