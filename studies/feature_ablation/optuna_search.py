@@ -3,8 +3,8 @@ Optuna hyperparameter search for feature ablation (one study per model type).
 
 1) Run this script to produce best_<model>.json under --out_dir (shared across feature ablations)
 2) Run training with: python -m studies.feature_ablation.train --optuna_dir <out_dir> ...
-3) Architecture width/depth is fixed to defaults (LSTM: hidden_dim=128, num_layers=2;
-   UniTS: d_model=128, e_layers=2). Search focuses on training and regularization knobs.
+3) Model architecture and non-train defaults follow default_ablation_hparams().
+   Optuna only searches: lr, batch_size, weight_decay, patience, grad_clip.
 
 Example:
     python -m studies.feature_ablation.optuna_search \\
@@ -44,112 +44,56 @@ from studies.feature_ablation.train import (
 from studies.feature_ablation.hparams import (
     AblationHyperParams,
     TrainHParams,
-    LSTMHParams,
-    UniTSHParams,
     default_ablation_hparams,
     save_hparams_json,
 )
 
 
+def _sample_train_only_hparams(trial: optuna.Trial, max_epochs: int) -> TrainHParams:
+    """Optuna search space: training hyperparameters only."""
+    return TrainHParams(
+        lr=trial.suggest_float('lr', 1e-5, 1e-2, log=True),
+        batch_size=trial.suggest_categorical(
+            'batch_size', [64, 128, 256, 512]),
+        weight_decay=trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True),
+        max_epochs=max_epochs,
+        patience=trial.suggest_int('patience', 3, 7),
+        grad_clip=trial.suggest_float('grad_clip', 0.5, 2.0),
+    )
+
+
 def _sample_lstm_hparams(trial: optuna.Trial, max_epochs: int) -> AblationHyperParams:
     base = default_ablation_hparams()
     return AblationHyperParams(
-        train=TrainHParams(
-            lr=trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            batch_size=trial.suggest_categorical(
-                'batch_size', [32, 64, 128, 256, 512]),
-            weight_decay=trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True),
-            max_epochs=max_epochs,
-            patience=trial.suggest_int('patience', 3, 7),
-            grad_clip=trial.suggest_float('grad_clip', 0.5, 2.0),
-        ),
-        lstm=LSTMHParams(
-            # Keep architecture fixed to prior default values for runtime stability.
-            hidden_dim=128,
-            num_layers=2,
-            dropout=trial.suggest_float('dropout', 0.0, 0.35),
-        ),
+        train=_sample_train_only_hparams(trial, max_epochs),
+        lstm=base.lstm,
         units=base.units,
     )
 
 
 def _sample_units_hparams(trial: optuna.Trial, max_epochs: int) -> AblationHyperParams:
     base = default_ablation_hparams()
-    # Keep architecture fixed to prior default values for runtime stability.
-    d_model = 128
-    n_heads = trial.suggest_categorical('n_heads', [4, 8])
-    if d_model % n_heads != 0:
-        raise optuna.TrialPruned()
-    patch_len = trial.suggest_categorical(
-        'patch_len', [8, 10, 12, 15, 16, 20, 24, 30])
     return AblationHyperParams(
-        train=TrainHParams(
-            lr=trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            batch_size=trial.suggest_categorical(
-                'batch_size', [16, 32, 64, 128, 256]),
-            weight_decay=trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True),
-            max_epochs=max_epochs,
-            patience=trial.suggest_int('patience', 3, 7),
-            grad_clip=trial.suggest_float('grad_clip', 0.5, 2.0),
-        ),
+        train=_sample_train_only_hparams(trial, max_epochs),
         lstm=base.lstm,
-        units=UniTSHParams(
-            d_model=d_model,
-            n_heads=n_heads,
-            e_layers=2,
-            patch_len=patch_len,
-            stride=patch_len,
-            prompt_num=trial.suggest_int('prompt_num', 4, 16),
-            dropout=trial.suggest_float('dropout', 0.0, 0.35),
-        ),
+        units=base.units,
     )
 
 
 def _ablation_from_frozen_params(
-    params: dict, model_type: str, max_epochs: int,
+    params: dict, _model_type: str, max_epochs: int,
 ) -> AblationHyperParams:
-    """Rebuild AblationHyperParams from Optuna trial.params (no re-sampling)."""
+    """Rebuild AblationHyperParams from Optuna trial.params (train-only search)."""
     base = default_ablation_hparams()
-    if model_type == 'lstm':
-        return AblationHyperParams(
-            train=TrainHParams(
-                lr=params['lr'],
-                batch_size=params['batch_size'],
-                weight_decay=params['weight_decay'],
-                max_epochs=max_epochs,
-                patience=params['patience'],
-                grad_clip=params['grad_clip'],
-            ),
-            lstm=LSTMHParams(
-                hidden_dim=params.get('hidden_dim', 128),
-                num_layers=params.get('num_layers', 2),
-                dropout=params['dropout'],
-            ),
-            units=base.units,
-        )
-    if model_type == 'units':
-        pl = int(params['patch_len'])
-        return AblationHyperParams(
-            train=TrainHParams(
-                lr=params['lr'],
-                batch_size=params['batch_size'],
-                weight_decay=params['weight_decay'],
-                max_epochs=max_epochs,
-                patience=params['patience'],
-                grad_clip=params['grad_clip'],
-            ),
-            lstm=base.lstm,
-            units=UniTSHParams(
-                d_model=params.get('d_model', 128),
-                n_heads=params['n_heads'],
-                e_layers=params.get('e_layers', 2),
-                patch_len=pl,
-                stride=pl,
-                prompt_num=params['prompt_num'],
-                dropout=params['dropout'],
-            ),
-        )
-    raise ValueError(model_type)
+    train = TrainHParams(
+        lr=params['lr'],
+        batch_size=params['batch_size'],
+        weight_decay=params['weight_decay'],
+        max_epochs=max_epochs,
+        patience=params['patience'],
+        grad_clip=params['grad_clip'],
+    )
+    return AblationHyperParams(train=train, lstm=base.lstm, units=base.units)
 
 
 def run_one_study(
