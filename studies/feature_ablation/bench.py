@@ -1,8 +1,13 @@
 """
-Micro-benchmark: seconds per epoch for representative LSTM and heavy UniTS configs.
+Micro-benchmark: seconds per epoch for LSTM and UniTS with default architecture.
 
-Use on the target GPU (e.g. H200) before long Optuna + ablation runs. Results can
-be fed into estimate_runtime.py for a 24h budget check.
+Timings are meant to match feature ablation / Optuna setup: model fields from
+default_ablation_hparams() (hparams.py); Optuna only searches train HPs
+(lr, batch_size, weight_decay, patience, grad_clip in optuna_search.py).
+
+Use on the target GPU (e.g. H200) before long runs. Feed results to
+estimate_runtime.py. Sec/epoch still varies with batch_size during search—this
+bench uses the default train batch_size for a consistent baseline.
 
 Example:
     python -m studies.feature_ablation.bench --data_path data/metabonet_train.parquet \\
@@ -24,44 +29,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from studies.feature_ablation.hparams import AblationHyperParams, LSTMHParams, TrainHParams, UniTSHParams
+from studies.feature_ablation.hparams import AblationHyperParams, TrainHParams, default_ablation_hparams
 from studies.feature_ablation.train import TrainJobConfig, split_train_val, train_one
 
 
-def _lstm_mid_hparams(epochs: int) -> AblationHyperParams:
-    return AblationHyperParams(
-        train=TrainHParams(
-            lr=1e-3,
-            batch_size=64,
-            weight_decay=1e-4,
-            max_epochs=epochs,
-            patience=max(epochs + 1, 10),
-            grad_clip=1.0,
-        ),
-        lstm=LSTMHParams(hidden_dim=128, num_layers=2, dropout=0.1),
+def _bench_hparams(epochs: int) -> AblationHyperParams:
+    """Defaults-aligned hparams; only train.max_epochs/patience adjusted for short runs."""
+    base = default_ablation_hparams()
+    train = TrainHParams(
+        lr=base.train.lr,
+        batch_size=base.train.batch_size,
+        weight_decay=base.train.weight_decay,
+        max_epochs=epochs,
+        patience=max(epochs + 1, 10),
+        grad_clip=base.train.grad_clip,
     )
-
-
-def _units_heavy_hparams(epochs: int) -> AblationHyperParams:
-    return AblationHyperParams(
-        train=TrainHParams(
-            lr=1e-3,
-            batch_size=32,
-            weight_decay=1e-4,
-            max_epochs=epochs,
-            patience=max(epochs + 1, 10),
-            grad_clip=1.0,
-        ),
-        units=UniTSHParams(
-            d_model=256,
-            n_heads=8,
-            e_layers=4,
-            patch_len=8,
-            stride=8,
-            prompt_num=16,
-            dropout=0.1,
-        ),
-    )
+    return AblationHyperParams(train=train, lstm=base.lstm, units=base.units)
 
 
 @click.command()
@@ -100,13 +83,17 @@ def main(
         'amp': amp,
         'tf32': tf32,
         'feature_set': feature_set,
+        'assumption': (
+            'default_ablation_hparams architecture; default train fields except '
+            'max_epochs/patience for benchmark length; matches optuna_search train-only search scope'
+        ),
         'lstm': {},
         'units': {},
     }
 
-    # LSTM (mid config)
+    # LSTM (default architecture + default train hyperparameters)
     t0 = time.perf_counter()
-    hp_l = _lstm_mid_hparams(epochs)
+    hp_l = _bench_hparams(epochs)
     s_lstm = train_one(
         TrainJobConfig(
             model_type='lstm',
@@ -132,16 +119,16 @@ def main(
         'best_val_loss': s_lstm['best_val_loss'],
     }
     print(
-        f'\n[LSTM mid] wall={wall_lstm:.2f}s  epochs={s_lstm["epochs_trained"]}  '
+        f'\n[LSTM default hparams] wall={wall_lstm:.2f}s  epochs={s_lstm["epochs_trained"]}  '
         f'~{sec_per_ep_l:.3f}s/epoch  best_val={s_lstm["best_val_loss"]:.6f}'
     )
 
     if str(device).startswith('cuda'):
         torch.cuda.synchronize()
 
-    # UniTS (heavy config)
+    # UniTS (default architecture + default train hyperparameters)
     t1 = time.perf_counter()
-    hp_u = _units_heavy_hparams(epochs)
+    hp_u = _bench_hparams(epochs)
     s_units = train_one(
         TrainJobConfig(
             model_type='units',
@@ -167,7 +154,7 @@ def main(
         'best_val_loss': s_units['best_val_loss'],
     }
     print(
-        f'[UniTS heavy] wall={wall_units:.2f}s  epochs={s_units["epochs_trained"]}  '
+        f'[UniTS default hparams] wall={wall_units:.2f}s  epochs={s_units["epochs_trained"]}  '
         f'~{sec_per_ep_u:.3f}s/epoch  best_val={s_units["best_val_loss"]:.6f}'
     )
 
