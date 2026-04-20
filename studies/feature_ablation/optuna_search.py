@@ -3,6 +3,8 @@ Optuna hyperparameter search for feature ablation (one study per model type).
 
 1) Run this script to produce best_<model>.json under --out_dir (shared across feature ablations)
 2) Run training with: python -m studies.feature_ablation.train --optuna_dir <out_dir> ...
+3) Architecture width/depth is fixed to defaults (LSTM: hidden_dim=128, num_layers=2;
+   UniTS: d_model=128, e_layers=2). Search focuses on training and regularization knobs.
 
 Example:
     python -m studies.feature_ablation.optuna_search \\
@@ -62,8 +64,9 @@ def _sample_lstm_hparams(trial: optuna.Trial, max_epochs: int) -> AblationHyperP
             grad_clip=trial.suggest_float('grad_clip', 0.5, 2.0),
         ),
         lstm=LSTMHParams(
-            hidden_dim=trial.suggest_categorical('hidden_dim', [64, 128, 256]),
-            num_layers=trial.suggest_int('num_layers', 1, 3),
+            # Keep architecture fixed to prior default values for runtime stability.
+            hidden_dim=128,
+            num_layers=2,
             dropout=trial.suggest_float('dropout', 0.0, 0.35),
         ),
         units=base.units,
@@ -72,7 +75,8 @@ def _sample_lstm_hparams(trial: optuna.Trial, max_epochs: int) -> AblationHyperP
 
 def _sample_units_hparams(trial: optuna.Trial, max_epochs: int) -> AblationHyperParams:
     base = default_ablation_hparams()
-    d_model = trial.suggest_categorical('d_model', [64, 128, 256])
+    # Keep architecture fixed to prior default values for runtime stability.
+    d_model = 128
     n_heads = trial.suggest_categorical('n_heads', [4, 8])
     if d_model % n_heads != 0:
         raise optuna.TrialPruned()
@@ -92,7 +96,7 @@ def _sample_units_hparams(trial: optuna.Trial, max_epochs: int) -> AblationHyper
         units=UniTSHParams(
             d_model=d_model,
             n_heads=n_heads,
-            e_layers=trial.suggest_int('e_layers', 1, 4),
+            e_layers=2,
             patch_len=patch_len,
             stride=patch_len,
             prompt_num=trial.suggest_int('prompt_num', 4, 16),
@@ -117,8 +121,8 @@ def _ablation_from_frozen_params(
                 grad_clip=params['grad_clip'],
             ),
             lstm=LSTMHParams(
-                hidden_dim=params['hidden_dim'],
-                num_layers=params['num_layers'],
+                hidden_dim=params.get('hidden_dim', 128),
+                num_layers=params.get('num_layers', 2),
                 dropout=params['dropout'],
             ),
             units=base.units,
@@ -136,9 +140,9 @@ def _ablation_from_frozen_params(
             ),
             lstm=base.lstm,
             units=UniTSHParams(
-                d_model=params['d_model'],
+                d_model=params.get('d_model', 128),
                 n_heads=params['n_heads'],
-                e_layers=params['e_layers'],
+                e_layers=params.get('e_layers', 2),
                 patch_len=pl,
                 stride=pl,
                 prompt_num=params['prompt_num'],

@@ -3,6 +3,8 @@ Rough wall-clock estimate for Optuna (two studies) + ablation training on one GP
 
 Plug in sec/epoch from bench.py (or your own timings). Uses average epochs per
 trial when early stopping is enabled.
+If architecture params are fixed in optuna_search.py, this still applies and
+typically reduces runtime variance across trials.
 
 Example:
     python -m studies.feature_ablation.estimate_runtime \\
