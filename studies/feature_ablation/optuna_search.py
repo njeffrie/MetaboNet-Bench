@@ -244,10 +244,28 @@ def run_one_study(
     print(f'  Meta {meta_path}')
 
 
+def _trials_for_model(
+    model_type: str,
+    n_trials: int,
+    n_trials_lstm: int | None,
+    n_trials_units: int | None,
+) -> int:
+    if model_type == 'lstm':
+        return int(n_trials_lstm if n_trials_lstm is not None else n_trials)
+    if model_type == 'units':
+        return int(n_trials_units if n_trials_units is not None else n_trials)
+    raise ValueError(model_type)
+
+
 @click.command()
 @click.option('--data_path', type=str, default='data/metabonet_train.parquet')
 @click.option('--device', type=str, default='cpu')
-@click.option('--n_trials', type=int, default=30)
+@click.option('--n_trials', type=int, default=30,
+              help='Trials per study if --n-trials-lstm / --n-trials-units not set')
+@click.option('--n-trials-lstm', 'n_trials_lstm', type=int, default=None,
+              help='Optuna trials for LSTM study (default: same as --n_trials)')
+@click.option('--n-trials-units', 'n_trials_units', type=int, default=None,
+              help='Optuna trials for UniTS study (default: same as --n_trials)')
 @click.option('--max_epochs_per_trial', type=int, default=20)
 @click.option('--seed', type=int, default=42)
 @click.option('--models', type=str, default='lstm,units',
@@ -270,7 +288,8 @@ def run_one_study(
 @click.option('--pruner-n-warmup-steps', type=int, default=3,
               help='MedianPruner: epochs (steps) before pruning')
 def main(
-    data_path, device, n_trials, max_epochs_per_trial, seed, models,
+    data_path, device, n_trials, n_trials_lstm, n_trials_units,
+    max_epochs_per_trial, seed, models,
     tune_feature_set, out_dir, study_name, num_workers,
     amp, tf32, no_pruner, pruner_n_startup_trials, pruner_n_warmup_steps,
 ):
@@ -290,10 +309,11 @@ def main(
         raise ValueError(f'--tune_feature_set must be one of {list(FEATURE_SETS.keys())}')
 
     for mt in model_types:
+        nt = _trials_for_model(mt, n_trials, n_trials_lstm, n_trials_units)
         sn = f'{study_name}_{mt}' if study_name else None
         run_one_study(
             mt, fs, train_df, val_df, device,
-            n_trials, max_epochs_per_trial, seed, out_dir, sn, num_workers,
+            nt, max_epochs_per_trial, seed, out_dir, sn, num_workers,
             use_amp=amp,
             use_tf32=tf32,
             use_pruner=not no_pruner,
