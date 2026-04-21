@@ -393,8 +393,16 @@ def train_one(
     }
 
 
-def _optuna_json_path(optuna_dir: str, model_type: str) -> str:
-    """One file per architecture: best_lstm.json, best_units.json (shared across feature ablations)."""
+def _optuna_json_path(
+    optuna_dir: str, model_type: str, feature_set: str | None = None,
+) -> str:
+    """Best hyperparameters from Optuna.
+
+    Layout (current): ``<optuna_dir>/<feature_set>/best_<model_type>.json`` per ablation.
+    Legacy: ``<optuna_dir>/best_<model_type>.json`` (one JSON shared across feature sets).
+    """
+    if feature_set:
+        return os.path.join(optuna_dir, feature_set, f'best_{model_type}.json')
     return os.path.join(optuna_dir, f'best_{model_type}.json')
 
 
@@ -403,11 +411,16 @@ def load_hparams_for_run(
     base_hp: AblationHyperParams,
     optuna_dir: str | None,
     hparams_json: str | None,
+    feature_set: str | None = None,
 ) -> AblationHyperParams:
-    """Load Optuna JSON for this model type only (same hparams for all feature ablations)."""
+    """Load Optuna JSON for this model type (per feature_set when using per-ablation search)."""
     if hparams_json:
         return load_hparams_json(hparams_json)
     if optuna_dir:
+        if feature_set:
+            path_fs = _optuna_json_path(optuna_dir, model_type, feature_set)
+            if os.path.isfile(path_fs):
+                return load_hparams_json(path_fs)
         path = _optuna_json_path(optuna_dir, model_type)
         if os.path.isfile(path):
             return load_hparams_json(path)
@@ -430,7 +443,8 @@ def load_hparams_for_run(
               default='cgm,cgm_insulin,cgm_carbs,cgm_insulin_carbs',
               help='Comma-separated feature sets to ablate')
 @click.option('--optuna_dir', type=str, default=None,
-              help='Directory with best_lstm.json / best_units.json from optuna_search (shared per model type)')
+              help='Optuna output dir: per feature_set best_<model>.json under '
+                   '<dir>/<feature_set>/ (or legacy flat best_<model>.json)')
 @click.option('--hparams_json', type=str, default=None,
               help='Single ablation hyperparameter JSON (trains one combo only)')
 @click.option('--num_workers', type=int, default=None,
@@ -476,10 +490,11 @@ def main(data_path, device, epochs, batch_size, lr, patience, models,
     else:
         summaries = []
         for model_type in model_types:
-            hp = load_hparams_for_run(model_type, base, optuna_dir, None)
-            if optuna_dir:
-                hp.train.max_epochs = epochs
             for feat_set in feat_sets:
+                hp = load_hparams_for_run(
+                    model_type, base, optuna_dir, None, feat_set)
+                if optuna_dir:
+                    hp.train.max_epochs = epochs
                 summaries.append(train_one(
                     TrainJobConfig(
                         model_type=model_type, feature_set=feat_set,

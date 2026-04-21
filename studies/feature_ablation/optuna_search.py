@@ -1,10 +1,12 @@
 """
-Optuna hyperparameter search for feature ablation (one study per model type).
+Optuna hyperparameter search for feature ablation.
 
-1) Run this script to produce best_<model>.json under --out_dir (shared across feature ablations)
+1) For each --tune_feature_sets entry, writes best_<model>.json under:
+       <out_dir>/<feature_set>/
+   (one hyperparameter search per ablation feature set).
 2) Run training with: python -m studies.feature_ablation.train --optuna_dir <out_dir> ...
-3) Model architecture and non-train defaults follow default_ablation_hparams().
-   Optuna only searches: lr, batch_size, weight_decay, patience, grad_clip.
+3) Model architecture follows default_ablation_hparams().
+   Optuna searches only: lr, batch_size, weight_decay (patience and grad_clip fixed to defaults).
 
 Example:
     python -m studies.feature_ablation.optuna_search \\
@@ -50,15 +52,16 @@ from studies.feature_ablation.hparams import (
 
 
 def _sample_train_only_hparams(trial: optuna.Trial, max_epochs: int) -> TrainHParams:
-    """Optuna search space: training hyperparameters only."""
+    """Optuna search space: lr, batch_size, weight_decay only."""
+    base = default_ablation_hparams()
     return TrainHParams(
         lr=trial.suggest_float('lr', 1e-5, 1e-2, log=True),
         batch_size=trial.suggest_categorical(
-            'batch_size', [64, 128, 256, 512]),
+            'batch_size', [32, 64, 128, 256]),
         weight_decay=trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True),
         max_epochs=max_epochs,
-        patience=trial.suggest_int('patience', 3, 7),
-        grad_clip=trial.suggest_float('grad_clip', 0.5, 2.0),
+        patience=base.train.patience,
+        grad_clip=base.train.grad_clip,
     )
 
 
@@ -83,15 +86,15 @@ def _sample_units_hparams(trial: optuna.Trial, max_epochs: int) -> AblationHyper
 def _ablation_from_frozen_params(
     params: dict, _model_type: str, max_epochs: int,
 ) -> AblationHyperParams:
-    """Rebuild AblationHyperParams from Optuna trial.params (train-only search)."""
+    """Rebuild AblationHyperParams from Optuna trial.params (lr, batch_size, weight_decay)."""
     base = default_ablation_hparams()
     train = TrainHParams(
         lr=params['lr'],
         batch_size=params['batch_size'],
         weight_decay=params['weight_decay'],
         max_epochs=max_epochs,
-        patience=params['patience'],
-        grad_clip=params['grad_clip'],
+        patience=base.train.patience,
+        grad_clip=base.train.grad_clip,
     )
     return AblationHyperParams(train=train, lstm=base.lstm, units=base.units)
 
@@ -217,9 +220,11 @@ def _trials_for_model(
 @click.option('--max_epochs_per_trial', type=int, default=20)
 @click.option('--seed', type=int, default=42)
 @click.option('--models', type=str, default='lstm,units',
-              help='Model types to tune (one study each)')
-@click.option('--tune_feature_set', type=str, default='cgm_insulin_carbs',
-              help='Feature set used as the tuning objective')
+              help='Model types to tune (one study each per feature set)')
+@click.option('--tune-feature-sets', 'tune_feature_sets', type=str,
+              default='cgm,cgm_insulin,cgm_carbs,cgm_insulin_carbs',
+              help='Comma-separated FEATURE_SETS keys; one Optuna pass per entry '
+                   '(writes under out_dir/<feature_set>/)')
 @click.option('--out_dir', type=str, default='studies/feature_ablation/optuna')
 @click.option('--study_name', type=str, default=None,
               help='Optional prefix for Optuna study names')
@@ -238,7 +243,7 @@ def _trials_for_model(
 def main(
     data_path, device, n_trials, n_trials_lstm, n_trials_units,
     max_epochs_per_trial, seed, models,
-    tune_feature_set, out_dir, study_name, num_workers,
+    tune_feature_sets, out_dir, study_name, num_workers,
     amp, tf32, no_pruner, pruner_n_startup_trials, pruner_n_warmup_steps,
 ):
     random.seed(seed)
@@ -252,22 +257,28 @@ def main(
           f'Val seq: {val_df["SequenceID"].nunique()}')
 
     model_types = [m.strip() for m in models.split(',')]
-    fs = tune_feature_set.strip()
-    if fs not in FEATURE_SETS:
-        raise ValueError(f'--tune_feature_set must be one of {list(FEATURE_SETS.keys())}')
+    tune_list = [s.strip() for s in tune_feature_sets.split(',') if s.strip()]
+    for fs in tune_list:
+        if fs not in FEATURE_SETS:
+            raise ValueError(
+                f'--tune_feature_sets entries must be one of {list(FEATURE_SETS.keys())}: '
+                f'bad {fs!r}'
+            )
 
-    for mt in model_types:
-        nt = _trials_for_model(mt, n_trials, n_trials_lstm, n_trials_units)
-        sn = f'{study_name}_{mt}' if study_name else None
-        run_one_study(
-            mt, fs, train_df, val_df, device,
-            nt, max_epochs_per_trial, seed, out_dir, sn, num_workers,
-            use_amp=amp,
-            use_tf32=tf32,
-            use_pruner=not no_pruner,
-            pruner_n_startup_trials=pruner_n_startup_trials,
-            pruner_n_warmup_steps=pruner_n_warmup_steps,
-        )
+    for fs in tune_list:
+        fs_out = os.path.join(out_dir, fs)
+        for mt in model_types:
+            nt = _trials_for_model(mt, n_trials, n_trials_lstm, n_trials_units)
+            sn = f'{study_name}_{fs}_{mt}' if study_name else None
+            run_one_study(
+                mt, fs, train_df, val_df, device,
+                nt, max_epochs_per_trial, seed, fs_out, sn, num_workers,
+                use_amp=amp,
+                use_tf32=tf32,
+                use_pruner=not no_pruner,
+                pruner_n_startup_trials=pruner_n_startup_trials,
+                pruner_n_warmup_steps=pruner_n_warmup_steps,
+            )
 
     train_flags = []
     if amp:
@@ -275,7 +286,8 @@ def main(
     if tf32:
         train_flags.append('--tf32')
     extra = (' \\\n    ' + ' '.join(train_flags)) if train_flags else ''
-    print('\nDone. Run final training with:')
+    print('\nDone. Outputs are under <out_dir>/<feature_set>/best_<model>.json.')
+    print('Run final training with:')
     print(f'  python -m studies.feature_ablation.train --optuna_dir {out_dir} '
           f'--data_path {data_path} --device {device}{extra}')
 
