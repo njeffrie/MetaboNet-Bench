@@ -201,8 +201,6 @@ def run_training_loop(
         lr=train_hp.lr,
         weight_decay=train_hp.weight_decay,
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max_epochs)
     criterion = nn.MSELoss()
 
     best_val_loss = float('inf')
@@ -240,7 +238,6 @@ def run_training_loop(
             train_loss_sum += loss.item() * x_batch.size(0)
             train_n += x_batch.size(0)
 
-        scheduler.step()
         train_loss = train_loss_sum / max(train_n, 1)
 
         model.eval()
@@ -252,10 +249,11 @@ def run_training_loop(
                 if use_autocast:
                     with torch.autocast(device_type='cuda', dtype=amp_dtype):
                         pred = forward_pred(model, model_type, x_batch)
-                        v = criterion(pred, y_batch).item()
+                        v_t = criterion(pred, y_batch)
                 else:
                     pred = forward_pred(model, model_type, x_batch)
-                    v = criterion(pred, y_batch).item()
+                    v_t = criterion(pred, y_batch)
+                v = float(v_t.item())
                 val_loss_sum += v * x_batch.size(0)
                 val_n += x_batch.size(0)
 
@@ -264,7 +262,7 @@ def run_training_loop(
             'epoch': epoch,
             'train_loss': train_loss,
             'val_loss': val_loss,
-            'lr': scheduler.get_last_lr()[0],
+            'lr': optimizer.param_groups[0]['lr'],
         }
         history.append(row)
         if verbose:
