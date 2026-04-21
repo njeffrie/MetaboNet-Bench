@@ -85,7 +85,8 @@ def main(
         'feature_set': feature_set,
         'assumption': (
             'default_ablation_hparams architecture; default train fields except '
-            'max_epochs/patience for benchmark length; matches optuna_search train-only search scope'
+            'max_epochs/patience for benchmark length; aligns with optuna_search '
+            '(lr, batch_size, weight_decay only)'
         ),
         'lstm': {},
         'units': {},
