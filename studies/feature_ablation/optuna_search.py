@@ -55,10 +55,10 @@ def _sample_train_only_hparams(trial: optuna.Trial, max_epochs: int) -> TrainHPa
     """Optuna search space: lr, batch_size, weight_decay only."""
     base = default_ablation_hparams()
     return TrainHParams(
-        lr=trial.suggest_float('lr', 1e-5, 1e-2, log=True),
+        lr=trial.suggest_float('lr', 1e-5, 3e-3, log=True),
         batch_size=trial.suggest_categorical(
             'batch_size', [32, 64, 128, 256]),
-        weight_decay=trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True),
+        weight_decay=trial.suggest_float('weight_decay', 1e-6, 1e-3, log=True),
         max_epochs=max_epochs,
         patience=base.train.patience,
         grad_clip=base.train.grad_clip,
