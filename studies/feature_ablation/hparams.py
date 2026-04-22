@@ -41,10 +41,20 @@ class UniTSHParams:
 
 
 @dataclass
+class GluForecastHParams:
+    d_model: int = 128
+    n_heads: int = 4
+    n_layers: int = 4
+    max_len: int = 180
+    dropout: float = 0.1
+
+
+@dataclass
 class AblationHyperParams:
     train: TrainHParams = field(default_factory=TrainHParams)
     lstm: LSTMHParams = field(default_factory=LSTMHParams)
     units: UniTSHParams = field(default_factory=UniTSHParams)
+    gluforecast: GluForecastHParams = field(default_factory=GluForecastHParams)
 
 
 def default_ablation_hparams() -> AblationHyperParams:
@@ -56,6 +66,7 @@ def ablation_hparams_to_dict(hp: AblationHyperParams) -> dict[str, Any]:
         'train': asdict(hp.train),
         'lstm': asdict(hp.lstm),
         'units': asdict(hp.units),
+        'gluforecast': asdict(hp.gluforecast),
     }
 
 
@@ -64,6 +75,7 @@ def ablation_hparams_from_dict(d: dict[str, Any]) -> AblationHyperParams:
         train=TrainHParams(**d.get('train', {})),
         lstm=LSTMHParams(**d.get('lstm', {})),
         units=UniTSHParams(**d.get('units', {})),
+        gluforecast=GluForecastHParams(**d.get('gluforecast', {})),
     )
 
 

@@ -27,6 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from models.lstm_trainable import TrainableLSTM
 from models.units_trainable import TrainableUniTS
+from models.gluforecast_trainable import TrainableGluForecast
 
 SEQ_LEN = 180
 PRED_LEN = 12
@@ -49,6 +50,9 @@ def load_model(checkpoint_path: str, device: str):
         return TrainableLSTM(checkpoint_path, feature_set=feature_set, device=device)
     elif model_type == 'units':
         return TrainableUniTS(checkpoint_path, feature_set=feature_set, device=device)
+    elif model_type == 'gluforecast':
+        return TrainableGluForecast(
+            checkpoint_path, feature_set=feature_set, device=device)
     else:
         raise ValueError(f'Unknown model_type in checkpoint: {model_type}')
 
