@@ -40,6 +40,7 @@ from studies.feature_ablation.train import (
     split_train_val,
     make_lstm,
     make_units,
+    make_gluforecast,
     run_training_loop,
     get_dataloader_kwargs,
 )
@@ -71,6 +72,7 @@ def _sample_lstm_hparams(trial: optuna.Trial, max_epochs: int) -> AblationHyperP
         train=_sample_train_only_hparams(trial, max_epochs),
         lstm=base.lstm,
         units=base.units,
+        gluforecast=base.gluforecast,
     )
 
 
@@ -80,6 +82,19 @@ def _sample_units_hparams(trial: optuna.Trial, max_epochs: int) -> AblationHyper
         train=_sample_train_only_hparams(trial, max_epochs),
         lstm=base.lstm,
         units=base.units,
+        gluforecast=base.gluforecast,
+    )
+
+
+def _sample_gluforecast_hparams(
+    trial: optuna.Trial, max_epochs: int,
+) -> AblationHyperParams:
+    base = default_ablation_hparams()
+    return AblationHyperParams(
+        train=_sample_train_only_hparams(trial, max_epochs),
+        lstm=base.lstm,
+        units=base.units,
+        gluforecast=base.gluforecast,
     )
 
 
@@ -96,7 +111,12 @@ def _ablation_from_frozen_params(
         patience=base.train.patience,
         grad_clip=base.train.grad_clip,
     )
-    return AblationHyperParams(train=train, lstm=base.lstm, units=base.units)
+    return AblationHyperParams(
+        train=train,
+        lstm=base.lstm,
+        units=base.units,
+        gluforecast=base.gluforecast,
+    )
 
 
 def run_one_study(
@@ -129,6 +149,9 @@ def run_one_study(
         elif model_type == 'units':
             hp = _sample_units_hparams(trial, max_epochs_per_trial)
             model = make_units(device, hp.units)
+        elif model_type == 'gluforecast':
+            hp = _sample_gluforecast_hparams(trial, max_epochs_per_trial)
+            model = make_gluforecast(feature_set, device, hp.gluforecast)
         else:
             raise ValueError(model_type)
 
@@ -200,11 +223,17 @@ def _trials_for_model(
     n_trials: int,
     n_trials_lstm: int | None,
     n_trials_units: int | None,
+    n_trials_gluforecast: int | None,
 ) -> int:
     if model_type == 'lstm':
         return int(n_trials_lstm if n_trials_lstm is not None else n_trials)
     if model_type == 'units':
         return int(n_trials_units if n_trials_units is not None else n_trials)
+    if model_type == 'gluforecast':
+        return int(
+            n_trials_gluforecast
+            if n_trials_gluforecast is not None else n_trials
+        )
     raise ValueError(model_type)
 
 
@@ -217,9 +246,11 @@ def _trials_for_model(
               help='Optuna trials for LSTM study (default: same as --n_trials)')
 @click.option('--n-trials-units', 'n_trials_units', type=int, default=None,
               help='Optuna trials for UniTS study (default: same as --n_trials)')
+@click.option('--n-trials-gluforecast', 'n_trials_gluforecast', type=int, default=None,
+              help='Optuna trials for GluForecast study (default: same as --n_trials)')
 @click.option('--max_epochs_per_trial', type=int, default=20)
 @click.option('--seed', type=int, default=42)
-@click.option('--models', type=str, default='lstm,units',
+@click.option('--models', type=str, default='lstm,units,gluforecast',
               help='Model types to tune (one study each per feature set)')
 @click.option('--tune-feature-sets', 'tune_feature_sets', type=str,
               default='cgm,cgm_insulin,cgm_carbs,cgm_insulin_carbs',
@@ -241,7 +272,7 @@ def _trials_for_model(
 @click.option('--pruner-n-warmup-steps', type=int, default=3,
               help='MedianPruner: epochs (steps) before pruning')
 def main(
-    data_path, device, n_trials, n_trials_lstm, n_trials_units,
+    data_path, device, n_trials, n_trials_lstm, n_trials_units, n_trials_gluforecast,
     max_epochs_per_trial, seed, models,
     tune_feature_sets, out_dir, study_name, num_workers,
     amp, tf32, no_pruner, pruner_n_startup_trials, pruner_n_warmup_steps,
@@ -268,7 +299,8 @@ def main(
     for fs in tune_list:
         fs_out = os.path.join(out_dir, fs)
         for mt in model_types:
-            nt = _trials_for_model(mt, n_trials, n_trials_lstm, n_trials_units)
+            nt = _trials_for_model(
+                mt, n_trials, n_trials_lstm, n_trials_units, n_trials_gluforecast)
             sn = f'{study_name}_{fs}_{mt}' if study_name else None
             run_one_study(
                 mt, fs, train_df, val_df, device,

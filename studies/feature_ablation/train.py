@@ -37,11 +37,13 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from models.lstm_trainable import TrainableLSTMModel
 from models.units_trainable import build_units_model
+from models.gluforecast_trainable import TrainableGluForecastModel
 from studies.feature_ablation.hparams import (
     AblationHyperParams,
     TrainHParams,
     LSTMHParams,
     UniTSHParams,
+    GluForecastHParams,
     default_ablation_hparams,
     load_hparams_json,
 )
@@ -162,8 +164,24 @@ def make_units(device: str, units_hp: UniTSHParams) -> nn.Module:
     return model.to(device)
 
 
+def make_gluforecast(
+    feature_set: str, device: str, gluforecast_hp: GluForecastHParams,
+) -> nn.Module:
+    model = TrainableGluForecastModel(
+        feature_set=feature_set,
+        d_model=gluforecast_hp.d_model,
+        n_heads=gluforecast_hp.n_heads,
+        n_layers=gluforecast_hp.n_layers,
+        max_len=gluforecast_hp.max_len,
+        dropout=gluforecast_hp.dropout,
+    )
+    return model.to(device)
+
+
 def forward_pred(model: nn.Module, model_type: str, x_batch: torch.Tensor) -> torch.Tensor:
     if model_type == 'lstm':
+        return model(x_batch)
+    if model_type == 'gluforecast':
         return model(x_batch)
     pred = model(
         x_enc=x_batch, x_mark_enc=None,
@@ -337,6 +355,8 @@ def train_one(
         model = make_lstm(input_dim, job.device, ablation_hp.lstm)
     elif job.model_type == 'units':
         model = make_units(job.device, ablation_hp.units)
+    elif job.model_type == 'gluforecast':
+        model = make_gluforecast(job.feature_set, job.device, ablation_hp.gluforecast)
     else:
         raise ValueError(f'Unknown model type: {job.model_type}')
 
@@ -377,6 +397,7 @@ def train_one(
             'train_hparams': asdict(ablation_hp.train),
             'lstm_hparams': asdict(ablation_hp.lstm),
             'units_hparams': asdict(ablation_hp.units),
+            'gluforecast_hparams': asdict(ablation_hp.gluforecast),
         }
         torch.save(ckpt, ckpt_path)
         if not quiet:
@@ -435,7 +456,7 @@ def load_hparams_for_run(
 @click.option('--batch_size', type=int, default=64)
 @click.option('--lr', type=float, default=1e-3)
 @click.option('--patience', type=int, default=5)
-@click.option('--models', type=str, default='lstm,units',
+@click.option('--models', type=str, default='lstm,units,gluforecast',
               help='Comma-separated model types to train')
 @click.option('--feature_sets', type=str,
               default='cgm,cgm_insulin,cgm_carbs,cgm_insulin_carbs',
