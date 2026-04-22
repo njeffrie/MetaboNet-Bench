@@ -1,5 +1,5 @@
 """
-Micro-benchmark: seconds per epoch for LSTM and UniTS with default architecture.
+Micro-benchmark: seconds per epoch for LSTM, UniTS, and GluForecast.
 
 Timings are meant to match feature ablation / Optuna setup: model fields from
 default_ablation_hparams() (hparams.py); Optuna only searches train HPs
@@ -90,6 +90,7 @@ def main(
         ),
         'lstm': {},
         'units': {},
+        'gluforecast': {},
     }
 
     # LSTM (default architecture + default train hyperparameters)
@@ -159,9 +160,43 @@ def main(
         f'~{sec_per_ep_u:.3f}s/epoch  best_val={s_units["best_val_loss"]:.6f}'
     )
 
+    # GluForecast (default architecture + default train hyperparameters)
+    t2 = time.perf_counter()
+    hp_g = _bench_hparams(epochs)
+    s_glu = train_one(
+        TrainJobConfig(
+            model_type='gluforecast',
+            feature_set=feature_set,
+            device=device,
+            num_workers=num_workers,
+            use_amp=amp,
+            use_tf32=tf32,
+        ),
+        train_df,
+        val_df,
+        hp_g,
+        save_checkpoint=False,
+        quiet=True,
+    )
+    wall_glu = time.perf_counter() - t2
+    ep_g = max(s_glu['epochs_trained'], 1)
+    sec_per_ep_g = wall_glu / ep_g
+    results['gluforecast'] = {
+        'wall_time_s': wall_glu,
+        'epochs_trained': s_glu['epochs_trained'],
+        'sec_per_epoch': sec_per_ep_g,
+        'best_val_loss': s_glu['best_val_loss'],
+    }
+    print(
+        f'[GluForecast default hparams] wall={wall_glu:.2f}s  epochs={s_glu["epochs_trained"]}  '
+        f'~{sec_per_ep_g:.3f}s/epoch  best_val={s_glu["best_val_loss"]:.6f}'
+    )
+
     print(
         '\nUse sec/epoch with: python -m studies.feature_ablation.estimate_runtime '
-        f'--lstm-sec-per-epoch {sec_per_ep_l:.6f} --units-sec-per-epoch {sec_per_ep_u:.6f} ...'
+        f'--lstm-sec-per-epoch {sec_per_ep_l:.6f} '
+        f'--units-sec-per-epoch {sec_per_ep_u:.6f} '
+        f'--gluforecast-sec-per-epoch {sec_per_ep_g:.6f} ...'
     )
 
     if json_out:
