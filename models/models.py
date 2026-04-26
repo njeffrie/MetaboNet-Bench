@@ -6,6 +6,7 @@ from models.UniTS import UniTS
 from models.gluforecast import Gluforecast
 from models.lstm_trainable import TrainableLSTM
 from models.units_trainable import TrainableUniTS
+from models.gluforecast_trainable import TrainableGluForecast
 
 ABLATION_CKPT_DIR = 'studies/feature_ablation/checkpoints'
 
@@ -18,6 +19,10 @@ _ABLATION_MODELS = {
     'units-cgm-insulin':       ('units', 'cgm_insulin'),
     'units-cgm-carbs':         ('units', 'cgm_carbs'),
     'units-cgm-insulin-carbs': ('units', 'cgm_insulin_carbs'),
+    'gluforecast-cgm':               ('gluforecast', 'cgm'),
+    'gluforecast-cgm-insulin':       ('gluforecast', 'cgm_insulin'),
+    'gluforecast-cgm-carbs':         ('gluforecast', 'cgm_carbs'),
+    'gluforecast-cgm-insulin-carbs': ('gluforecast', 'cgm_insulin_carbs'),
 }
 
 
@@ -41,7 +46,9 @@ def get_model(name, device='cpu'):
         ckpt = f'{ABLATION_CKPT_DIR}/{model_type}_{feature_set}.pth'
         if model_type == 'lstm':
             return TrainableLSTM(ckpt, feature_set=feature_set, device=device)
-        else:
+        elif model_type == 'units':
             return TrainableUniTS(ckpt, feature_set=feature_set, device=device)
+        else:
+            return TrainableGluForecast(ckpt, feature_set=feature_set, device=device)
     else:
         raise ValueError(f'Model {name} not found')
