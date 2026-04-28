@@ -40,8 +40,23 @@ def _build_split_lookup(test_df, patient_col, dataset_col, split_col="subject_sp
     return {(pid, None): val for pid, val in lookup.items()}
 
 
+def _prediction_columns(df):
+    metadata_cols = {
+        "dataset",
+        "DatasetName",
+        "Dataset",
+        "source_file",
+        "patient_id",
+        "timestamp",
+        "label",
+        "horizon",
+        "subject_split_across_traintest",
+    }
+    return [c for c in df.columns if c not in metadata_cols]
+
+
 def load_results_with_split_column(results_dir="results", ds_path="data/metabonet_public_test.parquet", calculate_by_split=False):
-    """Load *_results.parquet files and merge subject_split_across_traintest from test set."""
+    """Load *_results.parquet files into one wide table with a column per model."""
     results_dir = Path(results_dir)
     ds_path = Path(ds_path)
     if calculate_by_split:
@@ -62,13 +77,15 @@ def load_results_with_split_column(results_dir="results", ds_path="data/metabone
         print(f"No *_results.parquet found in {results_dir}")
         return None
 
-    frames = []
+    combined = None
     results_dataset_col = None
 
     for path in tqdm(result_files, desc="Loading results", unit="file"):
         df = pd.read_parquet(path)
-        model_name = path.stem.replace("_results", "")
-        df["model"] = model_name
+        if "prediction" not in df.columns:
+            print(f"Skipping {path}: no prediction column")
+            continue
+        file_model_name = path.stem.replace("_results", "")
 
         if results_dataset_col is None:
             results_dataset_col = _find_column(df, ["dataset", "DatasetName", "Dataset", "source_file"])
@@ -81,9 +98,25 @@ def load_results_with_split_column(results_dir="results", ds_path="data/metabone
                 axis=1,
             )
             df = df.drop(columns=["_pid_norm", "_ds"])
-        frames.append(df)
+        else:
+            df = df.drop(columns=["_pid_norm"])
 
-    return pd.concat(frames, ignore_index=True)
+        if "model" in df.columns and df["model"].nunique(dropna=True) > 1:
+            model_frames = df.groupby("model", dropna=False)
+        else:
+            model_frames = [(file_model_name, df)]
+
+        for model_name, model_part in model_frames:
+            model_part = model_part.drop(columns=["model"], errors="ignore")
+            metadata_cols = [c for c in model_part.columns if c != "prediction"]
+            model_df = model_part[metadata_cols + ["prediction"]].rename(columns={"prediction": model_name})
+
+            if combined is None:
+                combined = model_df
+            else:
+                combined = combined.merge(model_df, on=metadata_cols, how="outer", validate="one_to_one")
+
+    return combined
 
 
 def _rmse(pred, label):
@@ -94,17 +127,17 @@ def _mard(pred, label):
     return np.mean(np.abs(pred - label) / np.abs(label)) * 100
 
 
-def _metrics_for_subset(subset_df, horizons):
+def _metrics_for_subset(subset_df, model_col, horizons):
     """Compute (rmse_list, mard_list, results_rows) for given horizons."""
     rmse_list, mard_list = [], []
     rows = []
     for h in horizons:
-        h_df = subset_df[subset_df["horizon"] == h]
+        h_df = subset_df[subset_df["horizon"] == h].dropna(subset=[model_col, "label"])
         if len(h_df) == 0:
             rmse_list.append(None)
             mard_list.append(None)
             continue
-        pred, label = h_df["prediction"].values, h_df["label"].values
+        pred, label = h_df[model_col].values, h_df["label"].values
         rmse, mard = _rmse(pred, label), _mard(pred, label)
         rmse_list.append(rmse)
         mard_list.append(mard)
@@ -118,19 +151,18 @@ def compute_metrics(df, calculate_by_split):
         df["subject_split_across_traintest"] = df["subject_split_across_traintest"].fillna(False).astype(bool)
 
     expected_horizons = list(range(1, 13))
-    models = sorted(df["model"].unique())
+    models = sorted(_prediction_columns(df))
     results = []
 
     split_names = ["overall", "known_patients", "new_patients"] if calculate_by_split else ["overall"]
     split_values = [None, True, False] if calculate_by_split else [None]
 
     for model in tqdm(models, desc="Computing metrics", unit="model"):
-        model_df = df[df["model"] == model]
         for split_name, split_val in zip(split_names, split_values):
-            subset = model_df if split_val is None else model_df[model_df["subject_split_across_traintest"] == split_val]
+            subset = df if split_val is None else df[df["subject_split_across_traintest"] == split_val]
             if len(subset) == 0:
                 continue
-            _, _, rows = _metrics_for_subset(subset, expected_horizons)
+            _, _, rows = _metrics_for_subset(subset, model, expected_horizons)
             for r in rows:
                 r["model"] = model
                 r["split_type"] = split_name
@@ -175,12 +207,11 @@ def dts_zone_counts(labels, predictions, dts_grid_path, extent=(-62, 835, -47, 6
     
     return {k: int((z == k).sum()) for k in 'ABCDE'}
 
-def plot_dts_error_grid(df, horizon_min, subset_size = 2000):
+def plot_dts_error_grid(df, model_name, horizon_min, subset_size = 2000):
     """Plot DTS error grid for a model-horizon combination"""
     dts_grid_path='data/dts_grid.png'
-    df = df[df["horizon"] == horizon_min // 5]
-    labels, predictions = df["label"].values, df["prediction"].values
-    model_name = df["model"].values[0]
+    df = df[df["horizon"] == horizon_min // 5].dropna(subset=[model_name, "label"])
+    labels, predictions = df["label"].values, df[model_name].values
     zone_counts = dts_zone_counts(labels, predictions, dts_grid_path)
     zone_pct = {k: round(v / len(labels) * 100, 2) for k, v in zone_counts.items()}
     if subset_size is not None and subset_size < len(labels):
@@ -202,9 +233,8 @@ def plot_dts_error_grid(df, horizon_min, subset_size = 2000):
     return zone_pct
 
 def create_plots(df):
-    for model in tqdm(df["model"].unique(), desc="Generating plots", unit="model"):
-        model_df = df[df["model"] == model]
-        plot_dts_error_grid(model_df, 30, subset_size=2000)
+    for model in tqdm(_prediction_columns(df), desc="Generating plots", unit="model"):
+        plot_dts_error_grid(df, model, 30, subset_size=2000)
 
 @click.command()
 @click.option("--results_dir", type=str, default="results", help="Directory with *_results.parquet files")
