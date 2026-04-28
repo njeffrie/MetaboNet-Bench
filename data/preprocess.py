@@ -5,7 +5,6 @@ import pandas as pd
 import numpy as np
 import zipfile
 import click
-import dataset_info
 from dataset_processors import metabonet
 
 
