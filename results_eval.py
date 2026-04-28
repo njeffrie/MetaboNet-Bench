@@ -55,6 +55,50 @@ def _prediction_columns(df):
     return [c for c in df.columns if c not in metadata_cols]
 
 
+def _compact_results_for_parquet(df):
+    """Return a copy optimized for small parquet output."""
+    compact = df.copy()
+
+    for col in compact.columns:
+        series = compact[col]
+        if pd.api.types.is_bool_dtype(series):
+            compact[col] = series.astype("bool")
+        elif pd.api.types.is_integer_dtype(series):
+            downcasted = pd.to_numeric(series, downcast="integer")
+            if downcasted.dtype.itemsize < np.dtype("int32").itemsize:
+                downcasted = downcasted.astype("int32")
+            compact[col] = downcasted
+        elif pd.api.types.is_float_dtype(series):
+            compact[col] = pd.to_numeric(series, downcast="float")
+        elif pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series):
+            compact[col] = series.astype("category")
+
+    return compact
+
+
+def _write_compact_parquet(df, output_path):
+    compact = _compact_results_for_parquet(df)
+    float_cols = [
+        col for col in compact.columns
+        if pd.api.types.is_float_dtype(compact[col])
+    ]
+    dictionary_cols = [
+        col for col in compact.columns
+        if col not in float_cols
+    ]
+    compact.to_parquet(
+        output_path,
+        index=False,
+        engine="pyarrow",
+        compression="zstd",
+        compression_level=22,
+        use_dictionary=dictionary_cols,
+        use_byte_stream_split=float_cols,
+        write_statistics=False,
+        data_page_version="2.0",
+    )
+
+
 def load_results_with_split_column(results_dir="results", ds_path="data/metabonet_public_test.parquet", calculate_by_split=False):
     """Load *_results.parquet files into one wide table with a column per model."""
     results_dir = Path(results_dir)
@@ -252,8 +296,9 @@ def main(results_dir="results", ds_path="data/metabonet_public_test.parquet", ou
         create_plots(df)
     if output_path:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(output_path, index=False, engine="pyarrow")
-        print(f"Saved {len(df)} rows to {output_path}")
+        _write_compact_parquet(df, output_path)
+        size_mb = os.path.getsize(output_path) / (1024 * 1024)
+        print(f"Saved {len(df)} rows to {output_path} ({size_mb:.2f} MB)")
 
 
 if __name__ == "__main__":
