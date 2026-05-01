@@ -1,4 +1,5 @@
 from pathlib import Path
+import warnings
 
 import click
 import numpy as np
@@ -105,26 +106,23 @@ def _resolve_device(device):
 
 def _bootstrap_metrics_numpy(pred, label, n_bootstrap, ci, rng, bootstrap_batch_size):
     n = len(label)
+    sq_error = (pred - label) ** 2
+    ape = np.abs(pred - label) / np.abs(label) * 100
     rmse_samples = np.empty(n_bootstrap, dtype=np.float64)
     mard_samples = np.empty(n_bootstrap, dtype=np.float64)
 
     for start in range(0, n_bootstrap, bootstrap_batch_size):
         end = min(start + bootstrap_batch_size, n_bootstrap)
         idx = rng.integers(0, n, size=(end - start, n))
-        sample_pred = pred[idx]
-        sample_label = label[idx]
-        err = sample_pred - sample_label
-        rmse_samples[start:end] = np.sqrt(np.mean(err ** 2, axis=1))
-        mard_samples[start:end] = np.mean(
-            np.abs(err) / np.abs(sample_label), axis=1
-        ) * 100
+        rmse_samples[start:end] = np.sqrt(np.mean(sq_error[idx], axis=1))
+        mard_samples[start:end] = np.mean(ape[idx], axis=1)
 
     alpha = (100 - ci) / 2
     return {
-        "rmse": _rmse(pred, label),
+        "rmse": np.sqrt(np.mean(sq_error)),
         "rmse_ci_lower": np.percentile(rmse_samples, alpha),
         "rmse_ci_upper": np.percentile(rmse_samples, 100 - alpha),
-        "mard": _mard(pred, label),
+        "mard": np.mean(ape),
         "mard_ci_lower": np.percentile(mard_samples, alpha),
         "mard_ci_upper": np.percentile(mard_samples, 100 - alpha),
     }
@@ -132,13 +130,15 @@ def _bootstrap_metrics_numpy(pred, label, n_bootstrap, ci, rng, bootstrap_batch_
 
 def _bootstrap_metrics_torch(pred, label, n_bootstrap, ci, seed, device, bootstrap_batch_size):
     n = len(label)
-    pred_t = torch.as_tensor(pred, dtype=torch.float32, device=device)
-    label_t = torch.as_tensor(label, dtype=torch.float32, device=device)
+    sq_error_np = (pred - label) ** 2
+    ape_np = np.abs(pred - label) / np.abs(label) * 100
+    sq_error = torch.as_tensor(sq_error_np, dtype=torch.float32, device=device)
+    ape = torch.as_tensor(ape_np, dtype=torch.float32, device=device)
     generator = torch.Generator(device=device)
     generator.manual_seed(seed)
 
-    rmse_samples = torch.empty(n_bootstrap, dtype=torch.float32, device=device)
-    mard_samples = torch.empty(n_bootstrap, dtype=torch.float32, device=device)
+    rmse_samples = np.empty(n_bootstrap, dtype=np.float64)
+    mard_samples = np.empty(n_bootstrap, dtype=np.float64)
 
     for start in range(0, n_bootstrap, bootstrap_batch_size):
         end = min(start + bootstrap_batch_size, n_bootstrap)
@@ -147,30 +147,35 @@ def _bootstrap_metrics_torch(pred, label, n_bootstrap, ci, seed, device, bootstr
             device=device,
             generator=generator,
         )
-        sample_pred = pred_t[idx]
-        sample_label = label_t[idx]
-        err = sample_pred - sample_label
-        rmse_samples[start:end] = torch.sqrt(torch.mean(err.square(), dim=1))
-        mard_samples[start:end] = torch.mean(
-            torch.abs(err) / torch.abs(sample_label), dim=1
-        ) * 100
+        batch_rmse = torch.sqrt(torch.mean(sq_error[idx], dim=1))
+        batch_mard = torch.mean(ape[idx], dim=1)
+        rmse_samples[start:end] = batch_rmse.detach().cpu().numpy()
+        mard_samples[start:end] = batch_mard.detach().cpu().numpy()
 
-    alpha = (100 - ci) / 200
-    quantiles = torch.tensor([alpha, 1 - alpha], dtype=torch.float32, device=device)
-    rmse_ci = torch.quantile(rmse_samples, quantiles).cpu().numpy()
-    mard_ci = torch.quantile(mard_samples, quantiles).cpu().numpy()
+    rmse = float(np.sqrt(np.mean(sq_error_np)))
+    mard = float(np.mean(ape_np))
+    if (rmse > 0 and np.nanmax(rmse_samples) == 0) or (
+        mard > 0 and np.nanmax(mard_samples) == 0
+    ):
+        warnings.warn(
+            "CUDA bootstrap samples were all zero for a nonzero metric; "
+            "falling back to the NumPy bootstrap for this group.",
+            RuntimeWarning,
+        )
+        rng = np.random.default_rng(seed)
+        return _bootstrap_metrics_numpy(
+            pred, label, n_bootstrap, ci, rng, bootstrap_batch_size
+        )
 
-    err = pred_t - label_t
-    rmse = torch.sqrt(torch.mean(err.square())).item()
-    mard = (torch.mean(torch.abs(err) / torch.abs(label_t)) * 100).item()
+    alpha = (100 - ci) / 2
 
     return {
         "rmse": rmse,
-        "rmse_ci_lower": float(rmse_ci[0]),
-        "rmse_ci_upper": float(rmse_ci[1]),
+        "rmse_ci_lower": float(np.percentile(rmse_samples, alpha)),
+        "rmse_ci_upper": float(np.percentile(rmse_samples, 100 - alpha)),
         "mard": mard,
-        "mard_ci_lower": float(mard_ci[0]),
-        "mard_ci_upper": float(mard_ci[1]),
+        "mard_ci_lower": float(np.percentile(mard_samples, alpha)),
+        "mard_ci_upper": float(np.percentile(mard_samples, 100 - alpha)),
     }
 
 
