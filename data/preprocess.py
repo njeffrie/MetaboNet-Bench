@@ -1,9 +1,6 @@
-import os
 from tqdm import tqdm
-from datasets import Dataset
 import pandas as pd
 import numpy as np
-import zipfile
 import click
 from dataset_processors import metabonet
 
@@ -49,7 +46,7 @@ class DatsetPreprocessor:
                     limit=6,
                     limit_area='inside')
                 mask = patient_data['CGM'].isna()
-                mask = mask.where(mask, other=np.nan).infer_objects(copy=False)
+                mask = mask.where(mask, other=np.nan).infer_objects()
                 mask = mask.bfill(limit=6, limit_area='outside')
                 mask = mask.isna()
                 patient_data['CGM'] = patient_data['CGM'].where(mask, other=np.nan)
