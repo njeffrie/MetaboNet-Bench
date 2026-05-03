@@ -274,11 +274,27 @@ def plot_dts_error_grid(df, model_name, horizon_min, subset_size = 2000):
     os.makedirs('plots', exist_ok=True)
     plt.savefig(f'plots/{model_name}_{horizon_min}min.png', dpi=150, bbox_inches='tight')
     plt.close()
-    return zone_pct
+    return zone_counts, zone_pct
 
 def create_plots(df):
+    dts_rows = []
     for model in tqdm(_prediction_columns(df), desc="Generating plots", unit="model"):
-        plot_dts_error_grid(df, model, 30, subset_size=2000)
+        zone_counts, zone_pct = plot_dts_error_grid(df, model, 30, subset_size=2000)
+        row = {"model": model, "horizon_minutes": 30}
+        for zone in "ABCDE":
+            row[f"zone_{zone}_count"] = zone_counts[zone]
+            row[f"zone_{zone}_pct"] = zone_pct[zone]
+        dts_rows.append(row)
+
+    dts_df = pd.DataFrame(dts_rows)
+    if not dts_df.empty:
+        print(f"\n{'='*80}\nDTS ERROR GRID STATISTICS\n{'='*80}")
+        pct_cols = [f"zone_{zone}_pct" for zone in "ABCDE"]
+        print("\nDTS Zone Percentages:")
+        print(dts_df[["model", "horizon_minutes", *pct_cols]].to_string(index=False))
+        count_cols = [f"zone_{zone}_count" for zone in "ABCDE"]
+        print("\nDTS Zone Counts:")
+        print(dts_df[["model", "horizon_minutes", *count_cols]].to_string(index=False))
 
 @click.command()
 @click.option("--results_dir", type=str, default="results", help="Directory with *_results.parquet files")
