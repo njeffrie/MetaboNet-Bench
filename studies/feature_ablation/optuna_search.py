@@ -142,6 +142,7 @@ def run_one_study(
     input_dim = len(feature_cols)
     train_ds = GlucoseDataset(train_df, feature_cols)
     val_ds = GlucoseDataset(val_df, feature_cols)
+    target_is_mgdl_scale = bool(val_df['CGM'].median() > 20)
 
     sampler = optuna.samplers.TPESampler(seed=seed)
     pruner: optuna.pruners.BasePruner | None = None
@@ -168,7 +169,7 @@ def run_one_study(
 
     def best_value_text() -> str:
         try:
-            return f'{study.best_value:.4f}'
+            return f'{study.best_value:.3g}'
         except ValueError:
             return 'n/a'
 
@@ -182,8 +183,9 @@ def run_one_study(
             pbar.set_postfix(
                 trial=trial.number,
                 epoch=row['epoch'],
-                val=f"{row['val_loss']:.4f}",
-                best=best_value_text(),
+                val_mse=f"{row['val_loss']:.3g}",
+                val_rmse=f"{np.sqrt(row['val_loss']):.3g}",
+                best_mse=best_value_text(),
                 refresh=False,
             )
 
@@ -242,6 +244,7 @@ def run_one_study(
         'model_type': model_type,
         'feature_set': feature_set,
         'best_value': study.best_value,
+        'best_rmse': float(np.sqrt(study.best_value)),
         'best_params': study.best_params,
         'n_trials': n_trials,
         'max_epochs_per_trial': max_epochs_per_trial,
@@ -256,7 +259,16 @@ def run_one_study(
     with open(meta_path, 'w') as f:
         json.dump(meta, f, indent=2)
 
-    print(f'\n[{model_type}] tune_feature_set={feature_set} best_val={study.best_value:.6f}')
+    print(
+        f'\n[{model_type}] tune_feature_set={feature_set} '
+        f'best_val_mse={study.best_value:.6g} '
+        f'best_val_rmse={np.sqrt(study.best_value):.6g}'
+    )
+    if target_is_mgdl_scale and study.best_value < 1.0:
+        print(
+            '  WARNING: best validation MSE is < 1.0 on mg/dL-scale targets; '
+            'check for leakage, target scaling, or a loss/reporting bug.'
+        )
     print(f'  Saved {json_path}')
     print(f'  Meta {meta_path}')
 
