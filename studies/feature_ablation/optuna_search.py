@@ -29,6 +29,7 @@ import optuna
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -58,7 +59,7 @@ def _sample_train_only_hparams(trial: optuna.Trial, max_epochs: int) -> TrainHPa
     return TrainHParams(
         lr=trial.suggest_float('lr', 1e-5, 3e-3, log=True),
         batch_size=trial.suggest_categorical(
-            'batch_size', [32, 64, 128, 256]),
+            'batch_size', [256]),
         weight_decay=trial.suggest_float('weight_decay', 1e-6, 1e-3, log=True),
         max_epochs=max_epochs,
         patience=base.train.patience,
@@ -142,36 +143,6 @@ def run_one_study(
     train_ds = GlucoseDataset(train_df, feature_cols)
     val_ds = GlucoseDataset(val_df, feature_cols)
 
-    def objective(trial: optuna.Trial) -> float:
-        if model_type == 'lstm':
-            hp = _sample_lstm_hparams(trial, max_epochs_per_trial)
-            model = make_lstm(input_dim, device, hp.lstm)
-        elif model_type == 'units':
-            hp = _sample_units_hparams(trial, max_epochs_per_trial)
-            model = make_units(device, hp.units)
-        elif model_type == 'gluforecast':
-            hp = _sample_gluforecast_hparams(trial, max_epochs_per_trial)
-            model = make_gluforecast(feature_set, device, hp.gluforecast)
-        else:
-            raise ValueError(model_type)
-
-        dl_kw = get_dataloader_kwargs(device, num_workers)
-        train_loader = DataLoader(
-            train_ds, batch_size=hp.train.batch_size, shuffle=True, **dl_kw)
-        val_loader = DataLoader(
-            val_ds, batch_size=hp.train.batch_size, shuffle=False, **dl_kw)
-
-        trial_for_loop = trial if use_pruner else None
-        best_val_loss, _, _ = run_training_loop(
-            model, model_type, train_loader, val_loader, device,
-            hp.train, hp.train.max_epochs, hp.train.patience,
-            verbose=False,
-            use_amp=use_amp,
-            use_tf32=use_tf32,
-            optuna_trial=trial_for_loop,
-        )
-        return float(best_val_loss)
-
     sampler = optuna.samplers.TPESampler(seed=seed)
     pruner: optuna.pruners.BasePruner | None = None
     if use_pruner:
@@ -186,7 +157,79 @@ def run_one_study(
         pruner=pruner,
         study_name=study_id,
     )
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+
+    pbar = tqdm(
+        total=n_trials * max_epochs_per_trial,
+        desc=f'Optuna {model_type}/{feature_set}',
+        unit='epoch',
+        dynamic_ncols=True,
+    )
+    current_trial = {'number': None, 'epochs': 0}
+
+    def best_value_text() -> str:
+        try:
+            return f'{study.best_value:.4f}'
+        except ValueError:
+            return 'n/a'
+
+    def objective_with_progress(trial: optuna.Trial) -> float:
+        current_trial['number'] = trial.number
+        current_trial['epochs'] = 0
+
+        def update_progress(row: dict) -> None:
+            current_trial['epochs'] += 1
+            pbar.update(1)
+            pbar.set_postfix(
+                trial=trial.number,
+                epoch=row['epoch'],
+                val=f"{row['val_loss']:.4f}",
+                best=best_value_text(),
+                refresh=False,
+            )
+
+        try:
+            if model_type == 'lstm':
+                hp = _sample_lstm_hparams(trial, max_epochs_per_trial)
+                model = make_lstm(input_dim, device, hp.lstm)
+            elif model_type == 'units':
+                hp = _sample_units_hparams(trial, max_epochs_per_trial)
+                model = make_units(device, hp.units)
+            elif model_type == 'gluforecast':
+                hp = _sample_gluforecast_hparams(trial, max_epochs_per_trial)
+                model = make_gluforecast(feature_set, device, hp.gluforecast)
+            else:
+                raise ValueError(model_type)
+
+            dl_kw = get_dataloader_kwargs(device, num_workers)
+            train_loader = DataLoader(
+                train_ds, batch_size=hp.train.batch_size, shuffle=True, **dl_kw)
+            val_loader = DataLoader(
+                val_ds, batch_size=hp.train.batch_size, shuffle=False, **dl_kw)
+
+            trial_for_loop = trial if use_pruner else None
+            best_val_loss, _, _ = run_training_loop(
+                model, model_type, train_loader, val_loader, device,
+                hp.train, hp.train.max_epochs, hp.train.patience,
+                verbose=False,
+                use_amp=use_amp,
+                use_tf32=use_tf32,
+                optuna_trial=trial_for_loop,
+                progress_callback=update_progress,
+            )
+            return float(best_val_loss)
+        finally:
+            remaining = max_epochs_per_trial - current_trial['epochs']
+            if remaining > 0:
+                pbar.update(remaining)
+
+    try:
+        study.optimize(
+            objective_with_progress,
+            n_trials=n_trials,
+            show_progress_bar=False,
+        )
+    finally:
+        pbar.close()
 
     best_hp = _ablation_from_frozen_params(
         study.best_trial.params, model_type, max_epochs_per_trial)
