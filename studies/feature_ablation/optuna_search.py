@@ -57,10 +57,10 @@ def _sample_train_only_hparams(trial: optuna.Trial, max_epochs: int) -> TrainHPa
     """Optuna search space: lr, batch_size, weight_decay only."""
     base = default_ablation_hparams()
     return TrainHParams(
-        lr=trial.suggest_float('lr', 1e-5, 3e-3, log=True),
+        lr=trial.suggest_float('lr', 1e-5, 1e-3, log=True),
         batch_size=trial.suggest_categorical(
             'batch_size', [256]),
-        weight_decay=trial.suggest_float('weight_decay', 1e-6, 1e-3, log=True),
+        weight_decay=trial.suggest_float('weight_decay', 1e-5, 1e-3, log=True),
         max_epochs=max_epochs,
         patience=base.train.patience,
         grad_clip=base.train.grad_clip,
@@ -314,18 +314,23 @@ def _trials_for_model(
               help='MedianPruner: trials before pruning')
 @click.option('--pruner-n-warmup-steps', type=int, default=3,
               help='MedianPruner: epochs (steps) before pruning')
+@click.option('--subset-size', type=int, default=None,
+              help='Subset size to run the study on')
 def main(
     data_path, device, n_trials, n_trials_lstm, n_trials_units, n_trials_gluforecast,
     max_epochs_per_trial, seed, models,
     tune_feature_sets, out_dir, study_name, num_workers,
     amp, tf32, no_pruner, pruner_n_startup_trials, pruner_n_warmup_steps,
-):
+    subset_size,
+    ):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
     print(f'Loading {data_path} ...')
     df = pd.read_parquet(data_path)
+    if subset_size is not None:
+        df = df.sample(subset_size)
     train_df, val_df = split_train_val(df)
     print(f'  Train seq: {train_df["SequenceID"].nunique()}, '
           f'Val seq: {val_df["SequenceID"].nunique()}')
