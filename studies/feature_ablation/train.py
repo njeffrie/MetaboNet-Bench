@@ -21,6 +21,7 @@ import time
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Callable
 
 import click
 import numpy as np
@@ -203,6 +204,7 @@ def run_training_loop(
     use_amp: bool = False,
     use_tf32: bool = False,
     optuna_trial: optuna.Trial | None = None,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> tuple[float, dict, list]:
     _maybe_enable_cudnn_benchmark(device)
     _maybe_configure_tf32(device, use_tf32)
@@ -287,6 +289,8 @@ def run_training_loop(
             print(f"  Epoch {epoch:3d}/{max_epochs}  "
                   f"train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  "
                   f"lr={row['lr']:.2e}  [{time.time() - t_loop:.0f}s]")
+        if progress_callback is not None:
+            progress_callback(row)
 
         if optuna_trial is not None:
             optuna_trial.report(val_loss, step=epoch)
