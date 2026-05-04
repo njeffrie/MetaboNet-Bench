@@ -447,6 +447,7 @@ def load_hparams_for_run(
         path = _optuna_json_path(optuna_dir, model_type)
         if os.path.isfile(path):
             return load_hparams_json(path)
+    print(f'No Optuna hparams found for {model_type} {feature_set}, using base_hp')
     return base_hp
 
 
