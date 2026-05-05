@@ -385,23 +385,19 @@ def train_one(
     ckpt_path = os.path.join(job.checkpoint_dir, f'{run_name}.pth')
     if save_checkpoint:
         os.makedirs(job.checkpoint_dir, exist_ok=True)
+        model_hp = getattr(ablation_hp, job.model_type)
         ckpt = {
             'model_state_dict': model.state_dict(),
             'model_type': job.model_type,
             'feature_set': job.feature_set,
             'feature_cols': feature_cols,
             'input_dim': input_dim,
-            'hidden_dim': ablation_hp.lstm.hidden_dim,
-            'num_layers': ablation_hp.lstm.num_layers,
-            'dropout': ablation_hp.lstm.dropout,
             'pred_len': PRED_LEN,
             'seq_len': SEQ_LEN,
             'best_val_loss': best_val_loss,
             'epoch': last_epoch,
             'train_hparams': asdict(ablation_hp.train),
-            'lstm_hparams': asdict(ablation_hp.lstm),
-            'units_hparams': asdict(ablation_hp.units),
-            'gluforecast_hparams': asdict(ablation_hp.gluforecast),
+            f'{job.model_type}_hparams': asdict(model_hp),
         }
         torch.save(ckpt, ckpt_path)
         if not quiet:
@@ -433,20 +429,18 @@ def load_hparams_for_run(
     model_type: str,
     base_hp: AblationHyperParams,
     optuna_dir: str | None,
-    hparams_json: str | None,
     feature_set: str | None = None,
 ) -> AblationHyperParams:
     """Load Optuna JSON for this model type (per feature_set when using per-ablation search)."""
-    if hparams_json:
-        return load_hparams_json(hparams_json)
     if optuna_dir:
+        candidates = []
         if feature_set:
-            path_fs = _optuna_json_path(optuna_dir, model_type, feature_set)
-            if os.path.isfile(path_fs):
-                return load_hparams_json(path_fs)
-        path = _optuna_json_path(optuna_dir, model_type)
-        if os.path.isfile(path):
-            return load_hparams_json(path)
+            candidates.append(_optuna_json_path(optuna_dir, model_type, feature_set))
+        candidates.append(_optuna_json_path(optuna_dir, model_type))
+        for path in candidates:
+            if os.path.isfile(path):
+                _, hp = load_hparams_json(path)
+                return hp
     print(f'No Optuna hparams found for {model_type} {feature_set}, using base_hp')
     return base_hp
 
@@ -499,13 +493,18 @@ def main(data_path, device, epochs, batch_size, lr, patience, models,
     feat_sets = [f.strip() for f in feature_sets.split(',')]
 
     if hparams_json:
-        ablation_hp = load_hparams_json(hparams_json)
-        if len(model_types) != 1 or len(feat_sets) != 1:
-            raise ValueError('--hparams_json requires exactly one model and one feature_set')
+        json_model_type, ablation_hp = load_hparams_json(hparams_json)
+        if len(feat_sets) != 1:
+            raise ValueError('--hparams_json requires exactly one feature_set')
+        if model_types != [json_model_type]:
+            raise ValueError(
+                f'--hparams_json is for {json_model_type!r}; '
+                f'pass --models {json_model_type}'
+            )
         ablation_hp.train.max_epochs = epochs
         summaries = [train_one(
             TrainJobConfig(
-                model_type=model_types[0], feature_set=feat_sets[0],
+                model_type=json_model_type, feature_set=feat_sets[0],
                 device=device, num_workers=num_workers,
                 use_amp=amp, use_tf32=tf32,
             ),
@@ -516,7 +515,7 @@ def main(data_path, device, epochs, batch_size, lr, patience, models,
         for model_type in model_types:
             for feat_set in feat_sets:
                 hp = load_hparams_for_run(
-                    model_type, base, optuna_dir, None, feat_set)
+                    model_type, base, optuna_dir, feat_set)
                 if optuna_dir:
                     hp.train.max_epochs = epochs
                 summaries.append(train_one(

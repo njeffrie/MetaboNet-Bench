@@ -49,6 +49,13 @@ class GluForecastHParams:
     dropout: float = 0.1
 
 
+MODEL_HPARAM_CLASSES = {
+    'lstm': LSTMHParams,
+    'units': UniTSHParams,
+    'gluforecast': GluForecastHParams,
+}
+
+
 @dataclass
 class AblationHyperParams:
     train: TrainHParams = field(default_factory=TrainHParams)
@@ -61,32 +68,31 @@ def default_ablation_hparams() -> AblationHyperParams:
     return AblationHyperParams()
 
 
-def ablation_hparams_to_dict(hp: AblationHyperParams) -> dict[str, Any]:
-    return {
+def save_hparams_json(
+    hp: AblationHyperParams, path: str | Path, model_type: str,
+) -> None:
+    """Write only `train` and the section for `model_type` to JSON."""
+    if model_type not in MODEL_HPARAM_CLASSES:
+        raise ValueError(f'Unknown model_type {model_type!r}')
+    payload: dict[str, Any] = {
+        'model_type': model_type,
         'train': asdict(hp.train),
-        'lstm': asdict(hp.lstm),
-        'units': asdict(hp.units),
-        'gluforecast': asdict(hp.gluforecast),
+        model_type: asdict(getattr(hp, model_type)),
     }
-
-
-def ablation_hparams_from_dict(d: dict[str, Any]) -> AblationHyperParams:
-    return AblationHyperParams(
-        train=TrainHParams(**d.get('train', {})),
-        lstm=LSTMHParams(**d.get('lstm', {})),
-        units=UniTSHParams(**d.get('units', {})),
-        gluforecast=GluForecastHParams(**d.get('gluforecast', {})),
-    )
-
-
-def save_hparams_json(hp: AblationHyperParams, path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, 'w') as f:
-        json.dump(ablation_hparams_to_dict(hp), f, indent=2)
+        json.dump(payload, f, indent=2)
 
 
-def load_hparams_json(path: str | Path) -> AblationHyperParams:
+def load_hparams_json(path: str | Path) -> tuple[str, AblationHyperParams]:
+    """Load a model-specific hparams JSON, filling missing sections with defaults."""
     with open(path) as f:
         d = json.load(f)
-    return ablation_hparams_from_dict(d)
+    present = [m for m in MODEL_HPARAM_CLASSES if m in d]
+    model_type = d.get('model_type') or (present[0] if len(present) == 1 else None)
+    if model_type not in MODEL_HPARAM_CLASSES:
+        raise ValueError(f'Could not determine model_type from {path}')
+    hp = AblationHyperParams(train=TrainHParams(**d.get('train', {})))
+    setattr(hp, model_type, MODEL_HPARAM_CLASSES[model_type](**d.get(model_type, {})))
+    return model_type, hp
