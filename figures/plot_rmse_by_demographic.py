@@ -94,16 +94,21 @@ def compute_rmse_by_model_and_group(
                 # Standard error of MSE, then propagate to RMSE
                 mse_std = squared_errors.std() / np.sqrt(n_samples)
             else:
-                # Average across all timesteps
-                # Compute mean squared error per sample (averaged across timesteps)
-                sample_mse = np.zeros(n_samples)
+                # Average across all timesteps, ignoring NaNs from horizons / windows
+                # the model didn't predict for.
+                sq_err_per_t = []
                 for t in range(12):
-                    label_col = f'label_t{t}'
-                    pred_col = f'pred_t{t}'
-                    sample_mse += (group_df[label_col].values - group_df[pred_col].values) ** 2
-                sample_mse /= 12
-                mse = sample_mse.mean()
-                mse_std = sample_mse.std() / np.sqrt(n_samples)
+                    err2 = (group_df[f'label_t{t}'].values - group_df[f'pred_t{t}'].values) ** 2
+                    sq_err_per_t.append(err2)
+                sq_err = np.stack(sq_err_per_t, axis=0)  # (12, n_samples)
+                sample_mse = np.nanmean(sq_err, axis=0)  # per-sample MSE
+                n_finite = int(np.isfinite(sample_mse).sum())
+                if n_finite == 0:
+                    mse = np.nan
+                    mse_std = np.nan
+                else:
+                    mse = float(np.nanmean(sample_mse))
+                    mse_std = float(np.nanstd(sample_mse) / np.sqrt(n_finite))
 
             rmse = np.sqrt(mse)
             # Propagate error: if RMSE = sqrt(MSE), then d(RMSE)/d(MSE) = 1/(2*sqrt(MSE))
@@ -151,8 +156,9 @@ def plot_rmse_grouped_bars(
     """
     fig, ax = plt.subplots(figsize=figsize)
 
-    # Sort models so gluforecast renders / sits last in each group
-    models = sort_models_for_render(rmse_df['model'].unique())
+    # Rank models by their mean RMSE across groups (ascending — best first).
+    mean_rmse = rmse_df.groupby('model')['rmse'].mean()
+    models = list(mean_rmse.sort_values(kind='stable').index)
 
     # Use specified group order if provided, otherwise sort
     if group_order is not None:
@@ -161,6 +167,8 @@ def plot_rmse_grouped_bars(
         groups = [g for g in group_order if g in available_groups]
     else:
         groups = sorted(rmse_df['group'].unique(), key=lambda x: (isinstance(x, str), x))
+
+    CI_MULT = 1.96  # 95% CI
 
     if bars_by == 'model':
         # Demographics on x-axis, models as bars within each group
@@ -172,18 +180,29 @@ def plot_rmse_grouped_bars(
         for i, model in enumerate(models):
             model_data = rmse_df[rmse_df['model'] == model]
             rmse_values = []
+            rmse_errs = []
             for group in groups:
                 group_model_data = model_data[model_data['group'] == group]
                 if len(group_model_data) > 0:
                     rmse_values.append(group_model_data['rmse'].values[0])
+                    rmse_errs.append(group_model_data['rmse_std'].values[0])
                 else:
                     rmse_values.append(0)
+                    rmse_errs.append(0)
 
+            errs = CI_MULT * np.asarray(rmse_errs, dtype=float)
             offset = (i - n_models / 2 + 0.5) * bar_width
-            ax.bar(x + offset, rmse_values, bar_width,
-                   label=get_model_label(model, color_by=color_by),
-                   color=get_model_color_for(model, color_by=color_by),
-                   edgecolor='white')
+            bars = ax.bar(x + offset, rmse_values, bar_width,
+                          yerr=errs, capsize=3,
+                          label=get_model_label(model, color_by=color_by),
+                          color=get_model_color_for(model, color_by=color_by),
+                          edgecolor='white',
+                          error_kw={'elinewidth': 0.8, 'ecolor': '0.2'})
+            for bar, val, err in zip(bars, rmse_values, errs):
+                ax.text(bar.get_x() + bar.get_width() / 2,
+                        bar.get_height() + (err if np.isfinite(err) else 0) + 0.3,
+                        f'{val:.1f}', ha='center', va='bottom',
+                        rotation=90, fontsize=7)
 
         ax.set_xlabel(group_col.replace('_', ' ').title(), fontsize=12)
         ax.set_xticks(x)
@@ -202,19 +221,30 @@ def plot_rmse_grouped_bars(
         for i, (group, color) in enumerate(zip(groups, colors)):
             group_data = rmse_df[rmse_df['group'] == group]
             rmse_values = []
+            rmse_errs = []
             for model in models:
                 model_group_data = group_data[group_data['model'] == model]
                 if len(model_group_data) > 0:
                     rmse_values.append(model_group_data['rmse'].values[0])
+                    rmse_errs.append(model_group_data['rmse_std'].values[0])
                 else:
                     rmse_values.append(0)
+                    rmse_errs.append(0)
 
             n_samples = group_data['n_samples'].sum() // len(models)
             n_patients = group_data['n_patients'].iloc[0] if len(group_data) > 0 else 0
             label = f"{group} ({n_patients:,} patients, {n_samples:,} samples)"
 
+            errs = CI_MULT * np.asarray(rmse_errs, dtype=float)
             offset = (i - n_groups / 2 + 0.5) * bar_width
-            ax.bar(x + offset, rmse_values, bar_width, label=label, color=color, edgecolor='white')
+            bars = ax.bar(x + offset, rmse_values, bar_width, yerr=errs, capsize=3,
+                          label=label, color=color, edgecolor='white',
+                          error_kw={'elinewidth': 0.8, 'ecolor': '0.2'})
+            for bar, val, err in zip(bars, rmse_values, errs):
+                ax.text(bar.get_x() + bar.get_width() / 2,
+                        bar.get_height() + (err if np.isfinite(err) else 0) + 0.3,
+                        f'{val:.1f}', ha='center', va='bottom',
+                        rotation=90, fontsize=7)
 
         ax.set_xlabel('Model', fontsize=12)
         ax.set_xticks(x)
@@ -222,6 +252,8 @@ def plot_rmse_grouped_bars(
         ax.legend(title=group_col.replace('_', ' ').title(), bbox_to_anchor=(1.02, 1), loc='upper left')
 
     ax.set_ylabel('RMSE (mg/dL)', fontsize=12)
+    ymin, ymax = ax.get_ylim()
+    ax.set_ylim(ymin, ymax * 1.18)
 
     if title is None:
         if horizon_label == 'all':
