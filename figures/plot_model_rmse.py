@@ -13,6 +13,10 @@ import numpy as np
 import pandas as pd
 
 from model_styles import (
+    add_legends_below,
+    get_marker_edge_kwargs,
+    get_model_linestyle,
+    get_model_marker,
     add_figsize_arg,
     add_model_filter_args,
     add_model_legend_below,
@@ -84,13 +88,14 @@ def plot_rmse_by_timestep(
         ax.plot(
             model_data['minutes'],
             model_data['rmse'],
-            marker='o',
+            marker=get_model_marker(model),
             label=get_model_label(model, color_by=color_by),
             color=get_model_color_for(model, color_by=color_by),
             linewidth=1.0,
-            markersize=4,
-            linestyle='-',
+            markersize=5,
+            linestyle=get_model_linestyle(model),
             zorder=2 + i,
+            **get_marker_edge_kwargs(),
         )
 
     ax.set_xlabel('Prediction Horizon (minutes)', fontsize=14)
@@ -119,7 +124,10 @@ def plot_rmse_by_timestep(
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    add_model_legend_below(fig, ax)
+    if color_by == 'feature':
+        add_legends_below(fig, ax)
+    else:
+        add_model_legend_below(fig, ax)
     fig.savefig(output_path, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
 

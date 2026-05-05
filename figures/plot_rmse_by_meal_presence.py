@@ -15,11 +15,15 @@ import numpy as np
 import pandas as pd
 
 from model_styles import (
+    add_legends_below,
     add_model_filter_args,
     add_model_legend_below,
     apply_model_filter,
+    get_marker_edge_kwargs,
     get_model_color_for,
     get_model_label,
+    get_model_linestyle,
+    get_model_marker,
     sort_models_for_render,
 )
 
@@ -173,10 +177,12 @@ def main():
 
     # Subplot 1: No recent meal
     for model in models:
-        ax1.plot(horizon_minutes, results_no_meal[model], marker='o',
-                 label=get_model_label(model, color_by=color_by),
+        ax1.plot(horizon_minutes, results_no_meal[model], label=get_model_label(model, color_by=color_by),
                  color=get_model_color_for(model, color_by=color_by),
-                 linewidth=1.0, markersize=4, linestyle='-')
+                 marker=get_model_marker(model),
+                 linestyle=get_model_linestyle(model),
+                 linewidth=1.0, markersize=5,
+                 **get_marker_edge_kwargs())
 
     ax1.set_xlabel('Prediction Horizon (minutes)', fontsize=12)
     ax1.set_ylabel('RMSE (mg/dL)', fontsize=12)
@@ -186,10 +192,12 @@ def main():
 
     # Subplot 2: Recent meal present
     for model in models:
-        ax2.plot(horizon_minutes, results_has_meal[model], marker='o',
-                 label=get_model_label(model, color_by=color_by),
+        ax2.plot(horizon_minutes, results_has_meal[model], label=get_model_label(model, color_by=color_by),
                  color=get_model_color_for(model, color_by=color_by),
-                 linewidth=1.0, markersize=4, linestyle='-')
+                 marker=get_model_marker(model),
+                 linestyle=get_model_linestyle(model),
+                 linewidth=1.0, markersize=5,
+                 **get_marker_edge_kwargs())
 
     ax2.set_xlabel('Prediction Horizon (minutes)', fontsize=12)
     ax2.set_title(f'Recent Meal Present\n(carbs > 0 for at least one of t-5 to t-25min)\nn = {len(df_has_meal)//len(models):,} per model', fontsize=12)
@@ -202,7 +210,10 @@ def main():
 
     plt.suptitle('Model RMSE by Prediction Horizon: Meal vs No Meal', fontsize=14, y=1.02)
     plt.tight_layout()
-    add_model_legend_below(fig, ax1)
+    if color_by == 'feature':
+        add_legends_below(fig, ax1)
+    else:
+        add_model_legend_below(fig, ax1)
     plt.savefig(args.output, dpi=150, bbox_inches='tight')
     print(f"\nSaved plot to {args.output}")
 
@@ -211,10 +222,12 @@ def main():
 
     for model in models:
         diff = [results_has_meal[model][h] - results_no_meal[model][h] for h in range(len(horizons))]
-        ax3.plot(horizon_minutes, diff, marker='o',
-                 label=get_model_label(model, color_by=color_by),
+        ax3.plot(horizon_minutes, diff, label=get_model_label(model, color_by=color_by),
                  color=get_model_color_for(model, color_by=color_by),
-                 linewidth=1.0, markersize=4, linestyle='-')
+                 marker=get_model_marker(model),
+                 linestyle=get_model_linestyle(model),
+                 linewidth=1.0, markersize=5,
+                 **get_marker_edge_kwargs())
 
     ax3.axhline(y=0, color='black', linestyle='--', alpha=0.5)
     ax3.set_xlabel('Prediction Horizon (minutes)', fontsize=12)
@@ -228,7 +241,10 @@ def main():
 
     diff_output = args.output.with_stem(args.output.stem + '_diff')
     plt.tight_layout()
-    add_model_legend_below(fig2, ax3)
+    if color_by == 'feature':
+        add_legends_below(fig2, ax3)
+    else:
+        add_model_legend_below(fig2, ax3)
     plt.savefig(diff_output, dpi=150, bbox_inches='tight')
     print(f"Saved difference plot to {diff_output}")
 

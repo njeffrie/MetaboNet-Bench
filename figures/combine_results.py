@@ -601,39 +601,45 @@ def _enrich_chunk(
 ) -> pd.DataFrame:
     """Apply demographics + CGM stats + (optional) historical insulin/carbs to a chunk.
 
-    ``demographics_df`` must already have ``cgm_mean`` / ``cgm_std`` merged in.
+    ``demographics_df`` must already be multi-indexed on (``source_file``, ``id``)
+    and have ``cgm_mean`` / ``cgm_std`` merged in. ``timestamp_df`` must be
+    multi-indexed on (``source_file``, ``id``, ``date``). Per-chunk cost is
+    reduced by:
+      - casting ``user_id_str`` exactly once instead of once per merge,
+      - using ``right_index=True`` so pandas reuses the pre-built right-side
+        hash on every merge instead of rebuilding it from columns,
+      - skipping the redundant drops of right-side key columns (they're in the
+        index now, never materialized as columns).
     """
     chunk_df = chunk_df.copy()
     chunk_df['user_id_str'] = chunk_df['user_id'].astype(str)
+
     chunk_df = chunk_df.merge(
         demographics_df,
         left_on=['dataset', 'user_id_str'],
-        right_on=['source_file', 'id'],
+        right_index=True,
         how='left',
     )
-    chunk_df = chunk_df.drop(columns=['source_file', 'id', 'user_id_str'])
 
     if timestamp_df is not None and 'timestamp_t0' in chunk_df.columns:
-        chunk_df['user_id_str'] = chunk_df['user_id'].astype(str)
         chunk_df = chunk_df.merge(
             timestamp_df,
             left_on=['dataset', 'user_id_str', 'timestamp_t0'],
-            right_on=['source_file', 'id', 'date'],
+            right_index=True,
             how='left',
         )
         chunk_df = chunk_df.rename(columns={'CGM': 'cgm_at_t0'})
-        chunk_df = chunk_df.drop(columns=['source_file', 'id', 'date', 'user_id_str'])
 
+        ts_insulin_carbs = timestamp_df[['insulin', 'carbs']]
         for i in range(1, 6):
             offset_minutes = i * 5
             chunk_df[f'timestamp_tminus_{i}'] = (
                 chunk_df['timestamp_t0'] - pd.Timedelta(minutes=offset_minutes)
             )
-            chunk_df['user_id_str'] = chunk_df['user_id'].astype(str)
             hist_df = chunk_df.merge(
-                timestamp_df[['source_file', 'id', 'date', 'insulin', 'carbs']],
+                ts_insulin_carbs,
                 left_on=['dataset', 'user_id_str', f'timestamp_tminus_{i}'],
-                right_on=['source_file', 'id', 'date'],
+                right_index=True,
                 how='left',
                 suffixes=('', f'_tminus_{i}'),
             )
@@ -645,19 +651,29 @@ def _enrich_chunk(
                 hist_df[f'carbs_tminus_{i}'] if f'carbs_tminus_{i}' in hist_df.columns
                 else hist_df['carbs']
             )
-            chunk_df = chunk_df.drop(columns=[f'timestamp_tminus_{i}', 'user_id_str'])
+            chunk_df = chunk_df.drop(columns=[f'timestamp_tminus_{i}'])
 
+    chunk_df = chunk_df.drop(columns=['user_id_str'])
     return chunk_df
 
 
 def _load_demographic_helpers(metabonet_path: str, want_timestamps: bool):
-    """Pre-load and pre-merge the small lookup tables used by ``_enrich_chunk``."""
+    """Pre-load, pre-merge, and pre-index the lookup tables used by ``_enrich_chunk``.
+
+    Returning multi-indexed DataFrames lets ``_enrich_chunk`` use
+    ``right_index=True`` on every merge so the right-side hash is built once
+    and reused 6× per chunk instead of being rebuilt from columns each time.
+    """
     demographics_df = load_demographics(metabonet_path)
     cgm_stats_df = load_cgm_stats(metabonet_path)
     demographics_df = demographics_df.merge(
         cgm_stats_df, on=['source_file', 'id'], how='left'
+    ).set_index(['source_file', 'id'])
+    timestamp_df = (
+        load_timestamp_data(metabonet_path).set_index(['source_file', 'id', 'date'])
+        if want_timestamps
+        else None
     )
-    timestamp_df = load_timestamp_data(metabonet_path) if want_timestamps else None
     return demographics_df, timestamp_df
 
 

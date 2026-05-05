@@ -12,6 +12,10 @@ import numpy as np
 import pandas as pd
 
 from model_styles import (
+    add_legends_below,
+    get_marker_edge_kwargs,
+    get_model_linestyle,
+    get_model_marker,
     add_figsize_arg,
     add_model_filter_args,
     add_model_legend_below,
@@ -267,19 +271,25 @@ def plot_rmse_vs_label_combined(
         color = get_model_color_for(model, color_by=color_by)
         ax.plot(bin_centers, rmse_values, color=color, linewidth=1.0,
                 label=get_model_label(model, color_by=color_by),
-                linestyle='-', marker='o', markersize=4, markevery=5)
+                linestyle=get_model_linestyle(model),
+                marker=get_model_marker(model),
+                markersize=5, markevery=5,
+                **get_marker_edge_kwargs())
         ax.fill_between(bin_centers, rmse_values - ci_mult * rmse_sems, rmse_values + ci_mult * rmse_sems, color=color, alpha=0.15)
 
-    ax.set_xlabel('Reference CGM (mg/dL)', fontsize=12)
+    ax.set_xlabel('CGM at Prediction (mg/dL)', fontsize=12)
     ax.set_ylabel('RMSE (mg/dL)', fontsize=12)
-    ax.set_title(f'RMSE vs Reference CGM at {horizon_minutes}min Horizon', fontsize=14, fontweight='bold')
+    ax.set_title(f'RMSE vs CGM at Prediction for {horizon_minutes}min Horizon', fontsize=14, fontweight='bold')
     xmin, xmax = _label_xrange(error_df, bg_min=bg_min, bg_max=bg_max)
     ax.set_xlim(xmin, xmax)
     ax.set_xticks(_nice_xticks(xmin, xmax))
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    add_model_legend_below(fig, ax)
+    if color_by == 'feature':
+        add_legends_below(fig, ax)
+    else:
+        add_model_legend_below(fig, ax)
     fig.savefig(output_path, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
 

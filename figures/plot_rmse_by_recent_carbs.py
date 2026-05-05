@@ -19,6 +19,10 @@ import numpy as np
 import pandas as pd
 
 from model_styles import (
+    add_legends_below,
+    get_marker_edge_kwargs,
+    get_model_linestyle,
+    get_model_marker,
     add_figsize_arg,
     add_model_filter_args,
     add_model_legend_below,
@@ -120,7 +124,10 @@ def main():
     ax.grid(axis='y', alpha=0.3)
 
     plt.tight_layout()
-    add_model_legend_below(fig, ax)
+    if color_by == 'feature':
+        add_legends_below(fig, ax)
+    else:
+        add_model_legend_below(fig, ax)
     plt.savefig(args.output, dpi=150, bbox_inches='tight')
     print(f"\nSaved plot to {args.output}")
 
@@ -128,10 +135,13 @@ def main():
     fig2, ax2 = plt.subplots(figsize=tuple(args.figsize))
 
     for model in models:
-        ax2.plot(x, results[model], marker='o',
+        ax2.plot(x, results[model],
                  label=get_model_label(model, color_by=color_by),
                  color=get_model_color_for(model, color_by=color_by),
-                 linewidth=1.0, markersize=4, linestyle='-')
+                 marker=get_model_marker(model),
+                 linestyle=get_model_linestyle(model),
+                 linewidth=1.0, markersize=5,
+                 **get_marker_edge_kwargs())
 
     ax2.set_xlabel('Time of Carb Intake (relative to prediction time)', fontsize=12)
     ax2.set_ylabel(f'RMSE at {horizon_minutes}-minute horizon (mg/dL)', fontsize=12)
@@ -142,7 +152,10 @@ def main():
 
     line_output = args.output.with_stem(args.output.stem + '_line')
     plt.tight_layout()
-    add_model_legend_below(fig2, ax2)
+    if color_by == 'feature':
+        add_legends_below(fig2, ax2)
+    else:
+        add_model_legend_below(fig2, ax2)
     plt.savefig(line_output, dpi=150, bbox_inches='tight')
     print(f"Saved line plot to {line_output}")
 

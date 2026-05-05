@@ -23,8 +23,8 @@ python figures/plot_rmse_by_bg.py --input "$INPUT" --combined --output "$OUT_DIR
 python figures/plot_rmse_by_bg.py --input "$INPUT" --combined --output "$OUT_DIR/rmse_vs_bg_h60.png" --horizon 60
 
 # Figure 4 + Supplemental D3 Figure 8
-python figures/plot_rmse_by_meal_presence.py --input "$INPUT" --output "$OUT_DIR/results_metabonet_bench_meal.png" --exclude-models zoh le gluformer --figsize 10 4 --figsize-diff 7 4
-python figures/plot_rmse_by_correction.py --input "$INPUT" --output "$OUT_DIR/results_metabonet_bench_correction.png" --exclude-models zoh le gluformer --figsize 10 4 --figsize-diff 7 4
+python figures/plot_rmse_by_meal_presence.py --input "$INPUT" --output "$OUT_DIR/results_metabonet_bench_meal.png" --exclude-models zoh le gluformer --ablation only  --figsize 10 4 --figsize-diff 7 4
+python figures/plot_rmse_by_correction.py --input "$INPUT" --output "$OUT_DIR/results_metabonet_bench_correction.png" --exclude-models zoh le gluformer --ablation only --figsize 10 4 --figsize-diff 7 4
 
 # Figure 2 right
 python figures/plot_model_rmse.py --input "$INPUT" --output "$OUT_DIR/model_rmse_by_timestep.png" --ablation exclude

@@ -12,6 +12,10 @@ import numpy as np
 import pandas as pd
 
 from model_styles import (
+    add_legends_below,
+    get_marker_edge_kwargs,
+    get_model_linestyle,
+    get_model_marker,
     add_figsize_arg,
     add_model_filter_args,
     add_model_legend_below,
@@ -173,11 +177,12 @@ def plot_rmse_all_models(
                 color=get_model_color_for(model, color_by=color_by),
                 linewidth=1.0,
                 label=get_model_label(model, color_by=color_by),
-                marker='o',
-                markersize=4,
-                linestyle='-',
+                marker=get_model_marker(model),
+                markersize=5,
+                linestyle=get_model_linestyle(model),
                 capsize=3,
                 elinewidth=0.8,
+                **get_marker_edge_kwargs(),
             )
 
     ax.set_xlabel(x_label, fontsize=12)
@@ -192,7 +197,10 @@ def plot_rmse_all_models(
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    add_model_legend_below(fig, ax)
+    if color_by == 'feature':
+        add_legends_below(fig, ax)
+    else:
+        add_model_legend_below(fig, ax)
     fig.savefig(output_path, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
 

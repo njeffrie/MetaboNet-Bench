@@ -15,11 +15,15 @@ import numpy as np
 import pandas as pd
 
 from model_styles import (
+    add_legends_below,
     add_model_filter_args,
     add_model_legend_below,
     apply_model_filter,
+    get_marker_edge_kwargs,
     get_model_color_for,
     get_model_label,
+    get_model_linestyle,
+    get_model_marker,
     sort_models_for_render,
 )
 
@@ -170,10 +174,13 @@ def main():
 
     # Subplot 1: Hyperglycemia without correction
     for model in models:
-        ax1.plot(horizon_minutes, results_without_correction[model], marker='o',
+        ax1.plot(horizon_minutes, results_without_correction[model],
                  label=get_model_label(model, color_by=color_by),
                  color=get_model_color_for(model, color_by=color_by),
-                 linewidth=1.0, markersize=4, linestyle='-')
+                 marker=get_model_marker(model),
+                 linestyle=get_model_linestyle(model),
+                 linewidth=1.0, markersize=5,
+                 **get_marker_edge_kwargs())
 
     ax1.set_xlabel('Prediction Horizon (minutes)', fontsize=12)
     ax1.set_ylabel('RMSE (mg/dL)', fontsize=12)
@@ -183,10 +190,13 @@ def main():
 
     # Subplot 2: Hyperglycemia with correction
     for model in models:
-        ax2.plot(horizon_minutes, results_with_correction[model], marker='o',
+        ax2.plot(horizon_minutes, results_with_correction[model],
                  label=get_model_label(model, color_by=color_by),
                  color=get_model_color_for(model, color_by=color_by),
-                 linewidth=1.0, markersize=4, linestyle='-')
+                 marker=get_model_marker(model),
+                 linestyle=get_model_linestyle(model),
+                 linewidth=1.0, markersize=5,
+                 **get_marker_edge_kwargs())
 
     ax2.set_xlabel('Prediction Horizon (minutes)', fontsize=12)
     ax2.set_title(f'Hyperglycemia With Correction\n(BG > 250, insulin > 2u at t-5 to t-25min)\nn = {len(df_hyper_with_correction)//len(models):,} per model', fontsize=12)
@@ -199,7 +209,10 @@ def main():
 
     plt.suptitle('Model RMSE During Hyperglycemia: With vs Without Corrective Bolus', fontsize=14, y=1.02)
     plt.tight_layout()
-    add_model_legend_below(fig, ax1)
+    if color_by == 'feature':
+        add_legends_below(fig, ax1)
+    else:
+        add_model_legend_below(fig, ax1)
     plt.savefig(args.output, dpi=150, bbox_inches='tight')
     print(f"\nSaved plot to {args.output}")
 
@@ -208,10 +221,13 @@ def main():
 
     for model in models:
         diff = [results_with_correction[model][h] - results_without_correction[model][h] for h in range(len(horizons))]
-        ax3.plot(horizon_minutes, diff, marker='o',
+        ax3.plot(horizon_minutes, diff,
                  label=get_model_label(model, color_by=color_by),
                  color=get_model_color_for(model, color_by=color_by),
-                 linewidth=1.0, markersize=4, linestyle='-')
+                 marker=get_model_marker(model),
+                 linestyle=get_model_linestyle(model),
+                 linewidth=1.0, markersize=5,
+                 **get_marker_edge_kwargs())
 
     ax3.axhline(y=0, color='black', linestyle='--', alpha=0.5)
     ax3.set_xlabel('Prediction Horizon (minutes)', fontsize=12)
@@ -225,7 +241,10 @@ def main():
 
     diff_output = args.output.with_stem(args.output.stem + '_diff')
     plt.tight_layout()
-    add_model_legend_below(fig2, ax3)
+    if color_by == 'feature':
+        add_legends_below(fig2, ax3)
+    else:
+        add_model_legend_below(fig2, ax3)
     plt.savefig(diff_output, dpi=150, bbox_inches='tight')
     print(f"Saved difference plot to {diff_output}")
 

@@ -265,7 +265,12 @@ def _parse_model(model: str) -> tuple[str, str]:
       - 'all' / 'full'                  → both insulin and carbs
       - any other → CGM only (color 'none')
     """
-    parts = set(re.split(r'[-_]', model.lower()))
+    # Split on dashes/underscores and also whitespace, parens, +, /, comma.
+    # The wider delimiter set lets us parse display labels like
+    # "LSTM (CGM + insulin)" the same as the canonical id "lstm-cgm-insulin",
+    # which matters when add_legends_below() introspects ax legend labels.
+    parts = set(re.split(r'[-_\s()+/,]+', model.lower()))
+    parts.discard('')
 
     arch = next((a for a in _ARCH_KEYS_BY_LENGTH if a in parts), 'unknown')
 
