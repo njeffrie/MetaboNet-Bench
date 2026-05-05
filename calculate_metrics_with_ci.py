@@ -1,69 +1,21 @@
 from pathlib import Path
 
 import click
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+from eval_utils import (
+    bootstrap_mean_ci,
+    dts_zones,
+    iter_model_frames,
+    load_results,
+    resolve_device,
+)
 
 try:
     from tqdm import tqdm
 except ImportError:
     tqdm = lambda iterable, **_: iterable
-
-try:
-    import torch
-except ImportError:
-    torch = None
-
-
-METADATA_COLS = {
-    "dataset",
-    "DatasetName",
-    "Dataset",
-    "source_file",
-    "patient_id",
-    "timestamp",
-    "label",
-    "horizon",
-    "subject_split_across_traintest",
-}
-
-
-def _prediction_columns(df):
-    return [
-        c for c in df.columns
-        if c not in METADATA_COLS and c not in {"model", "prediction"}
-    ]
-
-
-def _load_results(input_path):
-    input_path = Path(input_path)
-    if input_path.is_dir():
-        frames = []
-        for path in sorted(input_path.glob("*_results.parquet")):
-            df = pd.read_parquet(path)
-            if "model" not in df.columns:
-                df["model"] = path.stem.replace("_results", "")
-            frames.append(df)
-        if not frames:
-            raise click.ClickException(f"No *_results.parquet files found in {input_path}")
-        return pd.concat(frames, ignore_index=True)
-    return pd.read_parquet(input_path)
-
-
-def _iter_model_frames(df):
-    if {"model", "prediction"} <= set(df.columns):
-        for model, model_df in df.groupby("model", sort=True):
-            yield model, model_df, "prediction"
-    else:
-        pred_cols = _prediction_columns(df)
-        if not pred_cols:
-            raise click.ClickException(
-                "No model prediction columns found. Expected long-form "
-                "`model`/`prediction` columns or a wide table with model columns."
-            )
-        for model in sorted(pred_cols):
-            yield model, df, model
 
 
 def _parse_horizons(horizons):
@@ -85,45 +37,11 @@ def _split_subsets(df, by_split):
     yield "new_patients", df[~split_col]
 
 
-def _resolve_device(device):
-    if device == "auto":
-        return "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
-    if device.startswith("cuda"):
-        if torch is None:
-            raise click.ClickException("CUDA bootstrap requires torch to be installed")
-        if not torch.cuda.is_available():
-            raise click.ClickException("CUDA was requested, but torch.cuda.is_available() is false")
-    return device
-
-
-def _bootstrap_mean_ci(
-    values, n_bootstrap, ci, rng, seed, device, batch_size, transform=lambda x: x,
-):
-    values = np.asarray(values, dtype=np.float64)
-    samples = np.empty(n_bootstrap, dtype=np.float64)
-    if device.startswith("cuda"):
-        values_t = torch.as_tensor(values, dtype=torch.float32, device=device)
-        gen = torch.Generator(device=device).manual_seed(seed)
-        for start in range(0, n_bootstrap, batch_size):
-            end = min(start + batch_size, n_bootstrap)
-            idx = torch.randint(0, len(values), (end - start, len(values)), device=device, generator=gen)
-            samples[start:end] = values_t[idx].mean(dim=1).detach().cpu().numpy()
-    else:
-        for start in range(0, n_bootstrap, batch_size):
-            end = min(start + batch_size, n_bootstrap)
-            idx = rng.integers(0, len(values), size=(end - start, len(values)))
-            samples[start:end] = values[idx].mean(axis=1)
-    alpha = (100 - ci) / 2
-    estimate = transform(values.mean())
-    lower, upper = transform(np.percentile(samples, [alpha, 100 - alpha]))
-    return float(estimate), float(lower), float(upper)
-
-
 def _bootstrap_metrics(pred, label, n_bootstrap, ci, rng, seed, device, bootstrap_batch_size):
-    rmse, rmse_lo, rmse_hi = _bootstrap_mean_ci(
+    rmse, rmse_lo, rmse_hi = bootstrap_mean_ci(
         (pred - label) ** 2, n_bootstrap, ci, rng, seed,
         device, bootstrap_batch_size, np.sqrt)
-    mard, mard_lo, mard_hi = _bootstrap_mean_ci(
+    mard, mard_lo, mard_hi = bootstrap_mean_ci(
         np.abs(pred - label) / np.abs(label) * 100, n_bootstrap, ci, rng,
         seed + 1, device, bootstrap_batch_size)
     return {
@@ -134,25 +52,6 @@ def _bootstrap_metrics(pred, label, n_bootstrap, ci, rng, seed, device, bootstra
         "mard_ci_lower": mard_lo,
         "mard_ci_upper": mard_hi,
     }
-
-
-def _dts_zones(labels, predictions, dts_grid_path, extent=(-62, 835, -47, 646)):
-    zone_rgb = {
-        "A": np.array([0.5647059, 0.72156864, 0.5019608], dtype=np.float32),
-        "B": np.array([1.0039216, 1.0039216, 0.59607846], dtype=np.float32),
-        "C": np.array([0.972549, 0.8156863, 0.5647059], dtype=np.float32),
-        "D": np.array([0.9411765, 0.53333336, 0.5019608], dtype=np.float32),
-        "E": np.array([0.78431374, 0.53333336, 0.65882355], dtype=np.float32),
-    }
-    r, p = map(lambda x: np.asarray(x).ravel(), (labels, predictions))
-    img = plt.imread(dts_grid_path).astype(np.float32)
-    h, w = img.shape[:2]
-    xmin, xmax, ymin, ymax = extent
-    x = np.round((r - xmin) / (xmax - xmin) * (w - 1)).astype(int)
-    y = np.round((ymax - p) / (ymax - ymin) * (h - 1)).astype(int)
-    keys = np.array(list(zone_rgb), dtype="<U1")
-    colors = np.stack([zone_rgb[k] for k in keys])
-    return keys[np.argmin(((img[y, x, :3][:, None] - colors) ** 2).sum(-1), axis=1)]
 
 
 def dts_confidence_intervals(
@@ -166,18 +65,18 @@ def dts_confidence_intervals(
     device="auto",
     bootstrap_batch_size=256,
 ):
-    device = _resolve_device(device)
+    device = resolve_device(device)
     rng = np.random.default_rng(seed)
     rows = []
     for model, model_df, prediction_col in tqdm(
-        list(_iter_model_frames(df)), desc="Bootstrapping DTS CIs", unit="model"
+        list(iter_model_frames(df)), desc="Bootstrapping DTS CIs", unit="model"
     ):
         for split_type, split_df in _split_subsets(model_df, by_split):
             hdf = split_df[split_df["horizon"] == horizon_minutes // 5]
             hdf = hdf.dropna(subset=[prediction_col, "label"])
             if hdf.empty:
                 continue
-            zones = _dts_zones(
+            zones = dts_zones(
                 hdf["label"].to_numpy(), hdf[prediction_col].to_numpy(), dts_grid_path)
             row = {
                 "model": model,
@@ -187,7 +86,7 @@ def dts_confidence_intervals(
             }
             for name, mask in {**{z: zones == z for z in "ABCDE"}, "CDE": np.isin(zones, list("CDE"))}.items():
                 count = int(mask.sum())
-                pct, lower, upper = _bootstrap_mean_ci(
+                pct, lower, upper = bootstrap_mean_ci(
                     mask.astype(np.float32) * 100, n_bootstrap, ci, rng,
                     seed + len(rows), device, bootstrap_batch_size)
                 row.update({
@@ -271,11 +170,11 @@ def bootstrap_confidence_intervals(
         raise click.ClickException("--n_bootstrap must be positive")
     if bootstrap_batch_size <= 0:
         raise click.ClickException("--bootstrap_batch_size must be positive")
-    device = _resolve_device(device)
+    device = resolve_device(device)
     rng = np.random.default_rng(seed)
     rows = []
 
-    model_frames = list(_iter_model_frames(df))
+    model_frames = list(iter_model_frames(df))
     for model, model_df, prediction_col in tqdm(
         model_frames, desc="Bootstrapping CIs", unit="model"
     ):
@@ -371,7 +270,7 @@ def main(
     by_split,
 ):
     """Bootstrap confidence intervals for RMSE and MARD by model and horizon."""
-    df = _load_results(input_path)
+    df = load_results(input_path)
     ci_df = bootstrap_confidence_intervals(
         df,
         horizons=_parse_horizons(horizons),

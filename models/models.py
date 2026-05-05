@@ -3,10 +3,7 @@ from models.zoh import ZeroOrderHold
 from models.linear import LinearExtrapolation
 from models.lstm import LSTM
 from models.UniTS import UniTS
-from models.gluforecast import Gluforecast
-from models.lstm_trainable import TrainableLSTM
-from models.units_trainable import TrainableUniTS
-from models.gluforecast_trainable import TrainableGluForecast
+from models.gluforecast import GluForecast
 
 ABLATION_CKPT_DIR = 'studies/feature_ablation/checkpoints'
 
@@ -35,20 +32,17 @@ def get_model(name, device='cpu'):
         return ZeroOrderHold()
     elif name == 'le':
         return LinearExtrapolation(15)
-    elif name == 'lstm':
-        return LSTM('njeffrie/LSTMGlucosePrediction', device)
-    elif name == 'units':
-        return UniTS('checkpoints/units.pth', device)
-    elif name == 'gluforecast':
-        return Gluforecast(model_path='checkpoints/gluforecast.pth', device=device)
-    elif name in _ABLATION_MODELS:
+    elif name in {'lstm', 'units', 'gluforecast'}:
+        name = f'{name}-cgm-insulin-carbs'
+
+    if name in _ABLATION_MODELS:
         model_type, feature_set = _ABLATION_MODELS[name]
         ckpt = f'{ABLATION_CKPT_DIR}/{model_type}_{feature_set}.pth'
         if model_type == 'lstm':
-            return TrainableLSTM(ckpt, feature_set=feature_set, device=device)
+            return LSTM(ckpt, feature_set=feature_set, device=device)
         elif model_type == 'units':
-            return TrainableUniTS(ckpt, feature_set=feature_set, device=device)
+            return UniTS(ckpt, feature_set=feature_set, device=device)
         else:
-            return TrainableGluForecast(ckpt, feature_set=feature_set, device=device)
+            return GluForecast(ckpt, feature_set=feature_set, device=device)
     else:
         raise ValueError(f'Model {name} not found')
