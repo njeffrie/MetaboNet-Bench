@@ -19,15 +19,15 @@ mkdir -p "$OUT_DIR"
 echo "Writing figures to: $OUT_DIR"
 
 # Figure 3
-python scripts/glucose_prediction/plot_rmse_by_bg.py --input "$INPUT" --combined --output "$OUT_DIR/rmse_vs_bg_h30.png" --horizon 30
-python scripts/glucose_prediction/plot_rmse_by_bg.py --input "$INPUT" --combined --output "$OUT_DIR/rmse_vs_bg_h60.png" --horizon 60
+python figures/plot_rmse_by_bg.py --input "$INPUT" --combined --output "$OUT_DIR/rmse_vs_bg_h30.png" --horizon 30
+python figures/plot_rmse_by_bg.py --input "$INPUT" --combined --output "$OUT_DIR/rmse_vs_bg_h60.png" --horizon 60
 
 # Figure 4 + Supplemental D3 Figure 8
-python scripts/glucose_prediction/plot_rmse_by_meal_presence.py --input "$INPUT" --output "$OUT_DIR/results_metabonet_bench_meal.png" --exclude-models zoh linear gluformer --figsize 10 4 --figsize-diff 7 4
-python scripts/glucose_prediction/plot_rmse_by_correction.py --input "$INPUT" --output "$OUT_DIR/results_metabonet_bench_correction.png" --exclude-models zoh linear gluformer --figsize 10 4 --figsize-diff 7 4
+python figures/plot_rmse_by_meal_presence.py --input "$INPUT" --output "$OUT_DIR/results_metabonet_bench_meal.png" --exclude-models zoh linear gluformer --figsize 10 4 --figsize-diff 7 4
+python figures/plot_rmse_by_correction.py --input "$INPUT" --output "$OUT_DIR/results_metabonet_bench_correction.png" --exclude-models zoh linear gluformer --figsize 10 4 --figsize-diff 7 4
 
 # Figure 2 right
-python scripts/glucose_prediction/plot_model_rmse.py --input "$INPUT" --output "$OUT_DIR/model_rmse_by_timestep.png" --ablation exclude
+python figures/plot_model_rmse.py --input "$INPUT" --output "$OUT_DIR/model_rmse_by_timestep.png" --ablation exclude
 
 # Supplemental D1 Figure 5
 python figures/plot_signed_error_dist.py --input "$INPUT" --output "$OUT_DIR/signed_error_ridge.png" --plot-type ridge --ablation exclude
