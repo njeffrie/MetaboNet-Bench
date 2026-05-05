@@ -33,7 +33,7 @@ python benchmark.py --model lstm,units,gluforecast --batch_size 16 --device cuda
 ```
 
 The local model names `lstm`, `units`, and `gluforecast` use the fully featured
-`*-cgm-insulin-carbs` checkpoints in `studies/feature_ablation/checkpoints/`.
+`*-cgm-insulin-carbs` checkpoints in `train/checkpoints/`.
 
 4. Combine model outputs and calculate summary metrics:
 
@@ -54,33 +54,4 @@ Use `--skip_dts` to omit DTS error-grid confidence intervals.
 
 ## Training Workflow
 
-1. Download the MetaboNet train split and place it at
-   `data/metabonet_public_train.parquet`.
-
-2. Preprocess the train split:
-
-```bash
-python data/preprocess.py --path_to_dataset data/metabonet_public_train.parquet
-```
-
-This writes `data/metabonet_train.parquet`.
-
-3. Run Optuna hyperparameter search:
-
-```bash
-python studies/feature_ablation/optuna_search.py \
-  --data_path data/metabonet_train.parquet \
-  --device cuda
-```
-
-4. Train final models from the selected hyperparameters:
-
-```bash
-python studies/feature_ablation/train.py \
-  --data_path data/metabonet_train.parquet \
-  --optuna_dir studies/feature_ablation/optuna \
-  --device cuda
-```
-
-Checkpoints are written to `studies/feature_ablation/checkpoints/` and can be
-benchmarked with `benchmark.py`.
+See [train/README.md](train/README.md) for preprocessing the train split, Optuna search, and training commands. Checkpoints are produced under `train/checkpoints/` for use with `benchmark.py`.
