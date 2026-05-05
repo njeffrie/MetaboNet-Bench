@@ -107,25 +107,6 @@ Both arguments are optional:
 - Arg 2 (`OUT_DIR`) defaults to `figures/out` (created if missing).
 
 To render a single chart instead of the whole sweep, run the corresponding
-script directly. A few common ones (see `figures/README.md` for the full
-list):
-
-```bash
-# RMSE vs prediction horizon, one line per model
-python figures/plot_model_rmse.py --input combined_results.parquet \
-    --output figures/out/model_rmse.png --ablation exclude
-
-# RMSE vs reference CGM, all models on one axes, at the 30-min horizon
-python figures/plot_rmse_by_bg.py --input combined_results.parquet \
-    --combined --horizon 30 --output figures/out/rmse_vs_bg_h30.png \
-    --ablation exclude
-
-# Bar chart stratified by a demographic (e.g. gender, all horizons averaged)
-python figures/plot_rmse_by_demographic.py --input combined_results.parquet \
-    --group-by gender --horizon all \
-    --output figures/out/rmse_by_gender.png --ablation exclude
-```
-
-Most figure scripts share a common filter surface
+script directly. See `figures/README.md` for the full list. Most figure scripts share a common filter surface
 (`--exclude-models`, `--all-variants`, `--ablation {all,only,exclude}`,
-`--figsize W H`); see `figures/README.md` for details.
+`--figsize W H`).
