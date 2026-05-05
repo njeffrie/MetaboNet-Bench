@@ -2,6 +2,7 @@ from tqdm import tqdm
 import pandas as pd
 import numpy as np
 import click
+from pathlib import Path
 from dataset_processors import metabonet
 
 
@@ -72,11 +73,12 @@ class DatsetPreprocessor:
 
     def save_data(self):
         split = 'test' if 'test' in self.dataset_path else 'train'
+        output_path = Path(self.dataset_path).parent / f'metabonet_{split}.parquet'
         self.dataset.to_parquet(
-        f'metabonet_{split}.parquet',
-        engine="pyarrow",
-        compression="zstd",
-        index=False)
+            output_path,
+            engine="pyarrow",
+            compression="zstd",
+            index=False)
 
 
 @click.command()

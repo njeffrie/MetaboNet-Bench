@@ -8,6 +8,8 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import os
 
+from eval_utils import mard, prediction_columns, rmse
+
 
 def _find_column(df, candidates):
     """Return first column in df that is in candidates, else None."""
@@ -38,21 +40,6 @@ def _build_split_lookup(test_df, patient_col, dataset_col, split_col="subject_sp
         return {(pid, ds): val for (pid, ds), val in lookup.items()}
     lookup = test_df.groupby("_pid_norm", dropna=False)[split_col].first()
     return {(pid, None): val for pid, val in lookup.items()}
-
-
-def _prediction_columns(df):
-    metadata_cols = {
-        "dataset",
-        "DatasetName",
-        "Dataset",
-        "source_file",
-        "patient_id",
-        "timestamp",
-        "label",
-        "horizon",
-        "subject_split_across_traintest",
-    }
-    return [c for c in df.columns if c not in metadata_cols]
 
 
 def _compact_results_for_parquet(df):
@@ -163,14 +150,6 @@ def load_results_with_split_column(results_dir="results", ds_path="data/metabone
     return combined
 
 
-def _rmse(pred, label):
-    return np.sqrt(np.mean((pred - label) ** 2))
-
-
-def _mard(pred, label):
-    return np.mean(np.abs(pred - label) / np.abs(label)) * 100
-
-
 def _metrics_for_subset(subset_df, model_col, horizons):
     """Compute (rmse_list, mard_list, results_rows) for given horizons."""
     rmse_list, mard_list = [], []
@@ -182,10 +161,10 @@ def _metrics_for_subset(subset_df, model_col, horizons):
             mard_list.append(None)
             continue
         pred, label = h_df[model_col].values, h_df["label"].values
-        rmse, mard = _rmse(pred, label), _mard(pred, label)
-        rmse_list.append(rmse)
-        mard_list.append(mard)
-        rows.append({"horizon_minutes": h * 5, "horizon_step": h, "rmse": rmse, "mard": mard, "n_predictions": len(h_df)})
+        rmse_value, mard_value = rmse(pred, label), mard(pred, label)
+        rmse_list.append(rmse_value)
+        mard_list.append(mard_value)
+        rows.append({"horizon_minutes": h * 5, "horizon_step": h, "rmse": rmse_value, "mard": mard_value, "n_predictions": len(h_df)})
     return rmse_list, mard_list, rows
 
 
@@ -195,7 +174,7 @@ def compute_metrics(df, calculate_by_split):
         df["subject_split_across_traintest"] = df["subject_split_across_traintest"].fillna(False).astype(bool)
 
     expected_horizons = list(range(1, 13))
-    models = sorted(_prediction_columns(df))
+    models = sorted(prediction_columns(df))
     results = []
 
     split_names = ["overall", "known_patients", "new_patients"] if calculate_by_split else ["overall"]
@@ -278,7 +257,7 @@ def plot_dts_error_grid(df, model_name, horizon_min, subset_size = 2000):
 
 def create_plots(df):
     dts_rows = []
-    for model in tqdm(_prediction_columns(df), desc="Generating plots", unit="model"):
+    for model in tqdm(prediction_columns(df), desc="Generating plots", unit="model"):
         zone_counts, zone_pct = plot_dts_error_grid(df, model, 30, subset_size=2000)
         row = {"model": model, "horizon_minutes": 30}
         for zone in "ABCDE":
@@ -306,7 +285,6 @@ def main(results_dir="results", ds_path="data/metabonet_public_test.parquet", ou
     df = load_results_with_split_column(results_dir=results_dir, ds_path=ds_path, calculate_by_split=calculate_by_split)
     if df is None:
         return
-    print(calculate_by_split)
     compute_metrics(df, calculate_by_split=calculate_by_split)
     if generate_plots:
         create_plots(df)

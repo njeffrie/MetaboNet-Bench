@@ -1,22 +1,27 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 from typing import Optional
 
-# Glucose normalization bounds (mg/dL)
-CGM_LOWER, CGM_UPPER = 38, 402
-CGM_HALF_RANGE = (CGM_UPPER - CGM_LOWER) / 2
+
+FEATURE_COLUMNS = {
+    'cgm': ['CGM'],
+    'cgm_insulin': ['CGM', 'Insulin'],
+    'cgm_carbs': ['CGM', 'Carbs'],
+    'cgm_insulin_carbs': ['CGM', 'Insulin', 'Carbs'],
+}
 
 
-class Preprocessor:
-    """Glucose normalization for model input/output."""
-
-    def normalize(self, glucose_values):
-        return (glucose_values - CGM_LOWER) / CGM_HALF_RANGE - 1.0
-
-    def unnormalize(self, glucose_normalized):
-        return (glucose_normalized + 1.0) * CGM_HALF_RANGE + CGM_LOWER
+def _time_features(ts_seconds: torch.Tensor) -> torch.Tensor:
+    day = 24 * 60 * 60
+    week = 7 * day
+    tod = 2 * torch.pi * (ts_seconds % day) / day
+    tow = 2 * torch.pi * (ts_seconds % week) / week
+    return torch.stack([
+        torch.sin(tod), torch.cos(tod),
+        torch.sin(tow), torch.cos(tow),
+    ], dim=-1)
 
 
 class _CausalSelfAttention(nn.Module):
@@ -30,25 +35,29 @@ class _CausalSelfAttention(nn.Module):
         self.proj = nn.Linear(d_model, d_model)
         self.dropout = dropout
 
-    def _split(self, x):
-        B, T, D = x.shape
-        return x.view(B, T, self.n_heads, self.hd).transpose(1, 2)
+    def _split(self, x: torch.Tensor) -> torch.Tensor:
+        bsz, t, _ = x.shape
+        return x.view(bsz, t, self.n_heads, self.hd).transpose(1, 2)
 
-    def _merge(self, x):
-        B, H, T, hd = x.shape
-        return x.transpose(1, 2).contiguous().view(B, T, H * hd)
+    def _merge(self, x: torch.Tensor) -> torch.Tensor:
+        bsz, h, t, hd = x.shape
+        return x.transpose(1, 2).contiguous().view(bsz, t, h * hd)
 
-    def forward(self, x, attn_mask: Optional[torch.Tensor] = None):
-        B, T_q, _ = x.shape
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         qkv = self.qkv(x)
         q, k, v = qkv.split(self.d_model, dim=-1)
-        q, k, v = self._split(q), self._split(k), self._split(v)
+        q = self._split(q)
+        k = self._split(k)
+        v = self._split(v)
 
-        causal_mask = torch.tril(
-            torch.ones(T_q, T_q, dtype=torch.bool, device=x.device)
-        ).unsqueeze(0).unsqueeze(0)  # (1, 1, T_q, T_q)
+        bsz = q.shape[0]
+        tq = q.shape[2]
+        tk = k.shape[2]
+        causal_mask = torch.ones(tq, tk, dtype=torch.bool, device=q.device).tril()
+        causal_mask = causal_mask.repeat(bsz, 1, 1).reshape(bsz, 1, tq, tk)
         if attn_mask is not None:
-            causal_mask = attn_mask.unsqueeze(1) & causal_mask
+            attn_mask = attn_mask.unsqueeze(1)
+            causal_mask = attn_mask & causal_mask
 
         y = F.scaled_dot_product_attention(
             q, k, v,
@@ -72,81 +81,109 @@ class _Block(nn.Module):
             nn.Dropout(dropout),
         )
 
-    def forward(self, x, attn_mask: Optional[torch.Tensor] = None):
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         x = x + self.attn(self.ln1(x), attn_mask=attn_mask)
-        return x + self.mlp(self.ln2(x))
+        x = x + self.mlp(self.ln2(x))
+        return x
 
 
-class GluforecastModel(nn.Module):
+class GluForecastModel(nn.Module):
     def __init__(
         self,
-        d_in: int = 7,
+        feature_set: str = 'cgm_insulin_carbs',
         d_model: int = 128,
         n_heads: int = 4,
         n_layers: int = 4,
         max_len: int = 180,
+        dropout: float = 0.1,
     ):
         super().__init__()
-        self.input_proj = nn.Linear(d_in, d_model)
+        self.feature_set = feature_set
+        self.feature_cols = FEATURE_COLUMNS[feature_set]
+        self.input_proj = nn.Linear(7, d_model)
         self.pos_emb = nn.Parameter(torch.zeros(1, max_len, d_model))
         self.blocks = nn.ModuleList([
-            _Block(d_model, n_heads, dropout=0.1) for _ in range(n_layers)
+            _Block(d_model, n_heads, dropout=dropout) for _ in range(n_layers)
         ])
         self.ln_f = nn.LayerNorm(d_model)
         self.head = nn.Linear(d_model, 12)
 
-    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """x: (B, T, 7). mask: (B, T) True = valid. Returns (B, T, 12)."""
-        B, T, _ = x.shape
-        h = self.input_proj(x) + self.pos_emb[:, :T]
-        if mask is not None:
-            h = h * mask.reshape(B, T, 1)
-            attn_mask = mask.unsqueeze(1) & mask.unsqueeze(2)
-        else:
-            attn_mask = None
+    def _split_channels(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        idx = {name: i for i, name in enumerate(self.feature_cols)}
+        cgm = x[:, :, idx['CGM']]
+        insulin = x[:, :, idx['Insulin']] if 'Insulin' in idx else torch.zeros_like(cgm)
+        carbs = x[:, :, idx['Carbs']] if 'Carbs' in idx else torch.zeros_like(cgm)
+        return cgm, insulin, carbs
 
+    def _build_model_input(
+        self,
+        x: torch.Tensor,
+        timestamps: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        cgm, insulin, carbs = self._split_channels(x)
+        bsz, t = cgm.shape
+        if timestamps is None:
+            tf = torch.zeros((bsz, t, 4), dtype=x.dtype, device=x.device)
+        else:
+            ts = timestamps.to(dtype=torch.float32, device=x.device)
+            if ts.abs().max().item() > 1e12:
+                ts = ts / 1e9
+            tf = _time_features(ts)
+        return torch.cat(
+            [cgm.unsqueeze(-1), insulin.unsqueeze(-1), carbs.unsqueeze(-1), tf],
+            dim=-1,
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        timestamps: Optional[torch.Tensor] = None,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        x7 = self._build_model_input(x, timestamps=timestamps)
+        bsz, t, _ = x7.shape
+        h = self.input_proj(x7) + self.pos_emb[:, :t]
+        attn_mask = None
+        if mask is not None:
+            h = h * mask.reshape(bsz, t, 1)
+            attn_mask = mask.unsqueeze(1) & mask.unsqueeze(2)
         for blk in self.blocks:
             h = blk(h, attn_mask=attn_mask)
-        return self.head(self.ln_f(h))
+        h = self.ln_f(h)
+        delta = self.head(h)
+        return x7[:, -1, 0].unsqueeze(-1) + delta[:, -1, :]
 
 
-class Gluforecast:
-    def __init__(self, model_path: str, device: str = 'cpu'):
+class GluForecast:
+    """Benchmark-compatible wrapper for local GluForecast checkpoints."""
+
+    def __init__(self, checkpoint_path: str, feature_set: str = 'cgm_insulin_carbs',
+                 device: str = 'cpu'):
+        self.feature_set = feature_set
+        self.feature_cols = FEATURE_COLUMNS[feature_set]
         self.device = device
-        self.model = GluforecastModel()
-        self.model.load_state_dict(torch.load(model_path, map_location=device))
-        self.model.to(device).eval()
-        self.preprocessor = Preprocessor()
+        ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
+        hp = ckpt.get('gluforecast_hparams') or {}
+        self.model = GluForecastModel(
+            feature_set=feature_set,
+            d_model=hp.get('d_model', 128),
+            n_heads=hp.get('n_heads', 4),
+            n_layers=hp.get('n_layers', 4),
+            max_len=hp.get('max_len', ckpt.get('seq_len', 180)),
+            dropout=hp.get('dropout', 0.1),
+        )
+        self.model.load_state_dict(ckpt['model_state_dict'])
+        self.model.to(device)
+        self.model.eval()
 
-    def _time_features(self, ts: torch.Tensor) -> torch.Tensor:
-        """ts (B, T) in seconds. Returns (B, T, 4): sin/cos of time-of-day and time-of-week."""
-        day = 24 * 3600
-        week = 7 * day
-        tod = 2 * torch.pi * (ts % day) / day
-        tow = 2 * torch.pi * (ts % week) / week
-        return torch.stack([torch.sin(tod), torch.cos(tod), torch.sin(tow), torch.cos(tow)], dim=-1)
-
-    def predict(self, timestamps: np.ndarray, cgm: np.ndarray, insulin: np.ndarray, carbs: np.ndarray) -> np.ndarray:
-        """Timestamps in nanoseconds. Returns (B, 12) int predictions in mg/dL."""
-        ts_sec = torch.tensor(timestamps.astype(np.int64) // 10**9)
-        cgm_norm = torch.tensor(self.preprocessor.normalize(cgm), dtype=torch.float32)
-        insulin_t = torch.tensor(insulin, dtype=torch.float32)
-        carbs_t = torch.tensor(carbs, dtype=torch.float32)
-
-        tf = self._time_features(ts_sec)
-        x = torch.cat([
-            cgm_norm.unsqueeze(-1),
-            insulin_t.unsqueeze(-1),
-            carbs_t.unsqueeze(-1),
-            tf,
-        ], dim=-1).to(self.device)
-
-        max_len = 167  # model input length (truncate if longer)
-        if x.shape[1] > max_len:
-            x = x[:, -max_len:, :]
-
+    def predict(self, timestamps, cgm, insulin, carbs):
+        channels = {'CGM': cgm, 'Insulin': insulin, 'Carbs': carbs}
+        x = np.stack([channels[c] for c in self.feature_cols], axis=-1)
+        x_t = torch.tensor(x, dtype=torch.float32, device=self.device)
+        ts_t = torch.tensor(timestamps, dtype=torch.float32, device=self.device)
         with torch.no_grad():
-            delta_hat = self.model(x, mask=None)
-            preds = x[:, -1, 0].unsqueeze(-1) + delta_hat[:, -1, :]
+            pred = self.model(x_t, timestamps=ts_t)
+        return pred.detach().cpu().numpy()
 
-        return self.preprocessor.unnormalize(preds).cpu().int().numpy()
+# Backward-compatible spelling for older imports.
+Gluforecast = GluForecast
