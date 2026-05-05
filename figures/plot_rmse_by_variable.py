@@ -67,11 +67,12 @@ def compute_binned_rmse(df: pd.DataFrame, x_var: str, timestep: int = None, bins
         pred_col = f'pred_t{timestep}'
         df['squared_error'] = (df[label_col] - df[pred_col]) ** 2
     else:
-        # All timesteps - compute mean squared error across all 12 timesteps
+        # All timesteps - average per-sample squared error across the 12 horizons,
+        # ignoring NaN cells (different models / windows cover different horizons).
         squared_errors = []
         for t in range(12):
             squared_errors.append((df[f'label_t{t}'] - df[f'pred_t{t}']) ** 2)
-        df['squared_error'] = np.mean(squared_errors, axis=0)
+        df['squared_error'] = np.nanmean(np.stack(squared_errors, axis=0), axis=0)
 
     # Create bins
     bin_labels = [(bins[i] + bins[i+1]) / 2 for i in range(len(bins) - 1)]
@@ -84,11 +85,17 @@ def compute_binned_rmse(df: pd.DataFrame, x_var: str, timestep: int = None, bins
         for bin_center in bin_labels:
             bin_df = model_df[model_df['bin'] == bin_center]
             if len(bin_df) > 0:
-                mse = bin_df['squared_error'].mean()
-                rmse = np.sqrt(mse)
+                # NaN-tolerant: a sample whose squared_error is NaN at all 12
+                # horizons stays NaN here and is dropped by nanmean/nanstd.
+                sq_err = bin_df['squared_error'].to_numpy(dtype=float)
+                finite = sq_err[np.isfinite(sq_err)]
+                if finite.size == 0:
+                    continue
+                mse = float(np.mean(finite))
+                rmse = float(np.sqrt(mse))
                 # Standard error of RMSE (approximation)
-                rmse_values = np.sqrt(bin_df['squared_error'])
-                rmse_std = rmse_values.std() / np.sqrt(len(bin_df))
+                rmse_values = np.sqrt(finite)
+                rmse_std = float(rmse_values.std(ddof=0) / np.sqrt(finite.size))
                 results.append({
                     'model': model,
                     'bin_center': bin_center,
@@ -162,7 +169,7 @@ def plot_rmse_all_models(
             ax.errorbar(
                 model_data['bin_center'],
                 model_data['rmse'],
-                yerr=model_data['rmse_std'],
+                yerr=1.96 * model_data['rmse_std'],
                 color=get_model_color_for(model, color_by=color_by),
                 linewidth=1.0,
                 label=get_model_label(model, color_by=color_by),
@@ -170,6 +177,7 @@ def plot_rmse_all_models(
                 markersize=4,
                 linestyle='-',
                 capsize=3,
+                elinewidth=0.8,
             )
 
     ax.set_xlabel(x_label, fontsize=12)

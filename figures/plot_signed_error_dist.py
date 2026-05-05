@@ -279,7 +279,11 @@ def plot_error_histograms(
             errors = (model_df[f'pred_t{t}'] - model_df[f'label_t{t}']).values
             all_errors.extend(errors)
 
-    x_limit = np.percentile(np.abs(all_errors), 99)
+    finite = np.asarray(all_errors, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        raise ValueError("No finite signed errors found; cannot build histogram.")
+    x_limit = float(np.percentile(np.abs(finite), 99)) or float(np.max(np.abs(finite))) or 1.0
     bin_edges = np.linspace(-x_limit, x_limit, n_bins + 1)
 
     for row, model in enumerate(models):
@@ -448,7 +452,13 @@ def plot_error_ridges(
             errors = (model_df[f'pred_t{t}'] - model_df[f'label_t{t}']).values
             all_errors.extend(errors)
 
-    x_limit = np.percentile(np.abs(all_errors), 99)
+    all_errors = np.asarray(all_errors, dtype=float)
+    finite = all_errors[np.isfinite(all_errors)]
+    if finite.size == 0:
+        raise ValueError("No finite signed errors found; cannot build ridge plot.")
+    x_limit = float(np.percentile(np.abs(finite), 99))
+    if not np.isfinite(x_limit) or x_limit <= 0:
+        x_limit = float(np.max(np.abs(finite))) or 1.0
     x_grid = np.linspace(-x_limit, x_limit, 200)
 
     # Color map for timesteps
@@ -468,13 +478,16 @@ def plot_error_ridges(
         for t in range(12):
             horizon = horizons[t]
             errors = (model_df[f'pred_t{t}'] - model_df[f'label_t{t}']).values
+            errors = errors[np.isfinite(errors)]
 
             # Compute KDE
             try:
+                if errors.size < 2:
+                    raise ValueError("not enough finite samples")
                 kde = gaussian_kde(errors)
                 y_kde = kde(x_grid)
             except Exception:
-                # Fallback if KDE fails (e.g., singular matrix)
+                # Fallback if KDE fails (e.g., singular matrix, all-NaN, <2 samples)
                 y_kde = np.zeros_like(x_grid)
 
             # Normalize KDE to have similar visual heights
@@ -562,7 +575,11 @@ def plot_error_surface3d(
             errors = (model_df[f'pred_t{t}'] - model_df[f'label_t{t}']).values
             all_errors.extend(errors)
 
-    x_limit = np.percentile(np.abs(all_errors), 99)
+    finite = np.asarray(all_errors, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        raise ValueError("No finite signed errors found; cannot build 3D surface plot.")
+    x_limit = float(np.percentile(np.abs(finite), 99)) or float(np.max(np.abs(finite))) or 1.0
     x_grid = np.linspace(-x_limit, x_limit, 100)
 
     for idx, model in enumerate(models):
@@ -578,8 +595,11 @@ def plot_error_surface3d(
 
         for t in range(12):
             errors = (model_df[f'pred_t{t}'] - model_df[f'label_t{t}']).values
+            errors = errors[np.isfinite(errors)]
 
             try:
+                if errors.size < 2:
+                    raise ValueError("not enough finite samples")
                 kde = gaussian_kde(errors)
                 density_matrix[t, :] = kde(x_grid)
             except Exception:
@@ -663,7 +683,11 @@ def plot_error_waterfall(
             errors = (model_df[f'pred_t{t}'] - model_df[f'label_t{t}']).values
             all_errors.extend(errors)
 
-    x_limit = np.percentile(np.abs(all_errors), 99)
+    finite = np.asarray(all_errors, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        raise ValueError("No finite signed errors found; cannot build waterfall plot.")
+    x_limit = float(np.percentile(np.abs(finite), 99)) or float(np.max(np.abs(finite))) or 1.0
     x_grid = np.linspace(-x_limit, x_limit, 100)
 
     # Color map for timesteps
@@ -681,7 +705,10 @@ def plot_error_waterfall(
         all_kdes = []
         for t in range(12):
             errors = (model_df[f'pred_t{t}'] - model_df[f'label_t{t}']).values
+            errors = errors[np.isfinite(errors)]
             try:
+                if errors.size < 2:
+                    raise ValueError("not enough finite samples")
                 kde = gaussian_kde(errors)
                 all_kdes.append(kde(x_grid))
             except Exception:
