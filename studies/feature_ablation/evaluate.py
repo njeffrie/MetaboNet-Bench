@@ -25,9 +25,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from models.lstm_trainable import TrainableLSTM
-from models.units_trainable import TrainableUniTS
-from models.gluforecast_trainable import TrainableGluForecast
+from models.lstm import LSTM
+from models.UniTS import UniTS
+from models.gluforecast import GluForecast
 
 SEQ_LEN = 180
 PRED_LEN = 12
@@ -47,11 +47,11 @@ def load_model(checkpoint_path: str, device: str):
     feature_set = ckpt['feature_set']
 
     if model_type == 'lstm':
-        return TrainableLSTM(checkpoint_path, feature_set=feature_set, device=device)
+        return LSTM(checkpoint_path, feature_set=feature_set, device=device)
     elif model_type == 'units':
-        return TrainableUniTS(checkpoint_path, feature_set=feature_set, device=device)
+        return UniTS(checkpoint_path, feature_set=feature_set, device=device)
     elif model_type == 'gluforecast':
-        return TrainableGluForecast(
+        return GluForecast(
             checkpoint_path, feature_set=feature_set, device=device)
     else:
         raise ValueError(f'Unknown model_type in checkpoint: {model_type}')

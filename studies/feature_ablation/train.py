@@ -36,9 +36,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from models.lstm_trainable import TrainableLSTMModel
-from models.units_trainable import build_units_model
-from models.gluforecast_trainable import TrainableGluForecastModel
+from models.lstm import LSTMModel
+from models.UniTS import build_units_model
+from models.gluforecast import GluForecastModel
 from studies.feature_ablation.hparams import (
     AblationHyperParams,
     TrainHParams,
@@ -150,7 +150,7 @@ def split_train_val(df: pd.DataFrame, val_fraction: float = 0.15, seed: int = 42
 
 
 def make_lstm(input_dim: int, device: str, lstm_hp: LSTMHParams) -> nn.Module:
-    model = TrainableLSTMModel(
+    model = LSTMModel(
         input_dim=input_dim,
         hidden_dim=lstm_hp.hidden_dim,
         num_layers=lstm_hp.num_layers,
@@ -168,7 +168,7 @@ def make_units(device: str, units_hp: UniTSHParams) -> nn.Module:
 def make_gluforecast(
     feature_set: str, device: str, gluforecast_hp: GluForecastHParams,
 ) -> nn.Module:
-    model = TrainableGluForecastModel(
+    model = GluForecastModel(
         feature_set=feature_set,
         d_model=gluforecast_hp.d_model,
         n_heads=gluforecast_hp.n_heads,
