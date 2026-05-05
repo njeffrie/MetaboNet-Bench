@@ -8,12 +8,24 @@ Each parquet has one row per (model, sample) with columns `label_t0..t11` and
 
 ### `combine_results.py`
 ** RUN THIS FIRST **
-Accepts results files/directory in the form of per-model parquet files or a single 
-results file with one model per column.
+Aggregates per-model prediction results into a single `combined_results*.parquet`
+that every plot script consumes, optionally merging in MetaboNet demographics.
 
-Aggregates per-model prediction parquets that result from running the models on the 
-test set with the original MetaboNet dataset into a single `combined_results*.parquet` 
-that every plot script consumes.
+Three input formats are auto-detected:
+
+- **Directory of per-model parquets** — `--results-dir DIR` containing
+  `<model>_results.parquet` files (long format).
+- **Directory of legacy npy files** — `--results-dir DIR` with `<model>/<dataset>.npy`.
+- **Single multi-model parquet** — `--results-dir FILE` (or the alias
+  `--input-file FILE`). Three layouts are recognized: long-with-`model`-column,
+  long-by-horizon + wide-by-model (one prediction column per model name), and
+  wide-by-horizon + wide-by-model (`<model>_pred_t0..t11` plus shared
+  `label_t0..t11`). Reads one model's columns at a time via pyarrow so the
+  full table is never resident in memory.
+
+The MetaboNet test parquet location comes from `--metabonet-test PATH` or
+`$METABONET_TEST_PARQUET` (local path or `s3://` URI). Pass `--no-demographics`
+to skip the merge.
 
 ## Shared helpers
 

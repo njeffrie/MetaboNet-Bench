@@ -64,6 +64,14 @@ directory, pivots them into wide format (`label_t0..t11`, `pred_t0..t11`),
 and merges in age/gender/CGM stats/insulin/carbs from the MetaboNet public
 test split.
 
+`--results-dir` accepts either a directory (per-model `*_results.parquet` or
+legacy npy subdirs) **or a single multi-model parquet**. Single-file layouts
+auto-detected: long-with-`model`-column, long-by-horizon + wide-by-model
+(one prediction column per model name), or wide-by-horizon + wide-by-model
+(`<model>_pred_t0..t11` plus shared `label_t0..t11`). The single-file path
+reads one model's columns at a time via pyarrow, so the full table is never
+held in memory.
+
 You need a copy of `metabonet_public_test.parquet`. Point at it either via
 the `METABONET_TEST_PARQUET` environment variable (a local path or `s3://`
 URI works — set this in `.env` if you prefer) or via `--metabonet-test`:
@@ -72,11 +80,16 @@ URI works — set this in `.env` if you prefer) or via `--metabonet-test`:
 # Option A: env var (set once per shell, or in .env)
 export METABONET_TEST_PARQUET=/path/to/metabonet_public_test.parquet
 
-# Option B: pass it explicitly
+# Option B: pass it explicitly, against a directory of per-model files
 python figures/combine_results.py combine \
     --results-dir results \
     --output combined_results.parquet \
     --metabonet-test /path/to/metabonet_public_test.parquet
+
+# Option C: a single multi-model parquet (use --input-file or --results-dir)
+python figures/combine_results.py combine \
+    --input-file all_models.parquet \
+    --output combined_results.parquet
 ```
 
 Use `--no-demographics` to skip the MetaboNet merge if you only need the
