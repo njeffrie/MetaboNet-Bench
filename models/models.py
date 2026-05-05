@@ -1,6 +1,6 @@
 from models.gluformer import Gluformer
 from models.zoh import ZeroOrderHold
-from models.linear import LinearRegression
+from models.linear import LinearExtrapolation
 from models.lstm import LSTM
 from models.UniTS import UniTS
 from models.gluforecast import Gluforecast
@@ -33,8 +33,8 @@ def get_model(name, device='cpu'):
         return Gluformer('njeffrie/Gluformer-tiny', device)
     elif name == 'zoh':
         return ZeroOrderHold()
-    elif name == 'linear':
-        return LinearRegression(15)
+    elif name == 'le':
+        return LinearExtrapolation(15)
     elif name == 'lstm':
         return LSTM('njeffrie/LSTMGlucosePrediction', device)
     elif name == 'units':
