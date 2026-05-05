@@ -238,7 +238,7 @@ def run_one_study(
 
     os.makedirs(out_dir, exist_ok=True)
     json_path = os.path.join(out_dir, f'best_{model_type}.json')
-    save_hparams_json(best_hp, json_path)
+    save_hparams_json(best_hp, json_path, model_type)
 
     meta = {
         'model_type': model_type,
