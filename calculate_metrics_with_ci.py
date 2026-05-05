@@ -1,7 +1,7 @@
 from pathlib import Path
-import warnings
 
 import click
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -27,14 +27,6 @@ METADATA_COLS = {
     "horizon",
     "subject_split_across_traintest",
 }
-
-
-def _rmse(pred, label):
-    return np.sqrt(np.mean((pred - label) ** 2))
-
-
-def _mard(pred, label):
-    return np.mean(np.abs(pred - label) / np.abs(label)) * 100
 
 
 def _prediction_columns(df):
@@ -104,98 +96,108 @@ def _resolve_device(device):
     return device
 
 
-def _bootstrap_metrics_numpy(pred, label, n_bootstrap, ci, rng, bootstrap_batch_size):
-    n = len(label)
-    sq_error = (pred - label) ** 2
-    ape = np.abs(pred - label) / np.abs(label) * 100
-    rmse_samples = np.empty(n_bootstrap, dtype=np.float64)
-    mard_samples = np.empty(n_bootstrap, dtype=np.float64)
-
-    for start in range(0, n_bootstrap, bootstrap_batch_size):
-        end = min(start + bootstrap_batch_size, n_bootstrap)
-        idx = rng.integers(0, n, size=(end - start, n))
-        rmse_samples[start:end] = np.sqrt(np.mean(sq_error[idx], axis=1))
-        mard_samples[start:end] = np.mean(ape[idx], axis=1)
-
+def _bootstrap_mean_ci(
+    values, n_bootstrap, ci, rng, seed, device, batch_size, transform=lambda x: x,
+):
+    values = np.asarray(values, dtype=np.float64)
+    samples = np.empty(n_bootstrap, dtype=np.float64)
+    if device.startswith("cuda"):
+        values_t = torch.as_tensor(values, dtype=torch.float32, device=device)
+        gen = torch.Generator(device=device).manual_seed(seed)
+        for start in range(0, n_bootstrap, batch_size):
+            end = min(start + batch_size, n_bootstrap)
+            idx = torch.randint(0, len(values), (end - start, len(values)), device=device, generator=gen)
+            samples[start:end] = values_t[idx].mean(dim=1).detach().cpu().numpy()
+    else:
+        for start in range(0, n_bootstrap, batch_size):
+            end = min(start + batch_size, n_bootstrap)
+            idx = rng.integers(0, len(values), size=(end - start, len(values)))
+            samples[start:end] = values[idx].mean(axis=1)
     alpha = (100 - ci) / 2
-    return {
-        "rmse": np.sqrt(np.mean(sq_error)),
-        "rmse_ci_lower": np.percentile(rmse_samples, alpha),
-        "rmse_ci_upper": np.percentile(rmse_samples, 100 - alpha),
-        "mard": np.mean(ape),
-        "mard_ci_lower": np.percentile(mard_samples, alpha),
-        "mard_ci_upper": np.percentile(mard_samples, 100 - alpha),
-    }
+    estimate = transform(values.mean())
+    lower, upper = transform(np.percentile(samples, [alpha, 100 - alpha]))
+    return float(estimate), float(lower), float(upper)
 
 
-def _bootstrap_metrics_torch(pred, label, n_bootstrap, ci, seed, device, bootstrap_batch_size):
-    n = len(label)
-    sq_error_np = (pred - label) ** 2
-    ape_np = np.abs(pred - label) / np.abs(label) * 100
-    sq_error = torch.as_tensor(sq_error_np, dtype=torch.float32, device=device)
-    ape = torch.as_tensor(ape_np, dtype=torch.float32, device=device)
-    generator = torch.Generator(device=device)
-    generator.manual_seed(seed)
-
-    rmse_samples = np.empty(n_bootstrap, dtype=np.float64)
-    mard_samples = np.empty(n_bootstrap, dtype=np.float64)
-
-    for start in range(0, n_bootstrap, bootstrap_batch_size):
-        end = min(start + bootstrap_batch_size, n_bootstrap)
-        idx = torch.randint(
-            0, n, (end - start, n),
-            device=device,
-            generator=generator,
-        )
-        batch_rmse = torch.sqrt(torch.mean(sq_error[idx], dim=1))
-        batch_mard = torch.mean(ape[idx], dim=1)
-        rmse_samples[start:end] = batch_rmse.detach().cpu().numpy()
-        mard_samples[start:end] = batch_mard.detach().cpu().numpy()
-
-    rmse = float(np.sqrt(np.mean(sq_error_np)))
-    mard = float(np.mean(ape_np))
-    if (rmse > 0 and np.nanmax(rmse_samples) == 0) or (
-        mard > 0 and np.nanmax(mard_samples) == 0
-    ):
-        warnings.warn(
-            "CUDA bootstrap samples were all zero for a nonzero metric; "
-            "falling back to the NumPy bootstrap for this group.",
-            RuntimeWarning,
-        )
-        rng = np.random.default_rng(seed)
-        return _bootstrap_metrics_numpy(
-            pred, label, n_bootstrap, ci, rng, bootstrap_batch_size
-        )
-
-    alpha = (100 - ci) / 2
-
+def _bootstrap_metrics(pred, label, n_bootstrap, ci, rng, seed, device, bootstrap_batch_size):
+    rmse, rmse_lo, rmse_hi = _bootstrap_mean_ci(
+        (pred - label) ** 2, n_bootstrap, ci, rng, seed,
+        device, bootstrap_batch_size, np.sqrt)
+    mard, mard_lo, mard_hi = _bootstrap_mean_ci(
+        np.abs(pred - label) / np.abs(label) * 100, n_bootstrap, ci, rng,
+        seed + 1, device, bootstrap_batch_size)
     return {
         "rmse": rmse,
-        "rmse_ci_lower": float(np.percentile(rmse_samples, alpha)),
-        "rmse_ci_upper": float(np.percentile(rmse_samples, 100 - alpha)),
+        "rmse_ci_lower": rmse_lo,
+        "rmse_ci_upper": rmse_hi,
         "mard": mard,
-        "mard_ci_lower": float(np.percentile(mard_samples, alpha)),
-        "mard_ci_upper": float(np.percentile(mard_samples, 100 - alpha)),
+        "mard_ci_lower": mard_lo,
+        "mard_ci_upper": mard_hi,
     }
 
 
-def _bootstrap_metrics(
-    pred,
-    label,
-    n_bootstrap,
-    ci,
-    rng,
-    seed,
-    device,
-    bootstrap_batch_size,
+def _dts_zones(labels, predictions, dts_grid_path, extent=(-62, 835, -47, 646)):
+    zone_rgb = {
+        "A": np.array([0.5647059, 0.72156864, 0.5019608], dtype=np.float32),
+        "B": np.array([1.0039216, 1.0039216, 0.59607846], dtype=np.float32),
+        "C": np.array([0.972549, 0.8156863, 0.5647059], dtype=np.float32),
+        "D": np.array([0.9411765, 0.53333336, 0.5019608], dtype=np.float32),
+        "E": np.array([0.78431374, 0.53333336, 0.65882355], dtype=np.float32),
+    }
+    r, p = map(lambda x: np.asarray(x).ravel(), (labels, predictions))
+    img = plt.imread(dts_grid_path).astype(np.float32)
+    h, w = img.shape[:2]
+    xmin, xmax, ymin, ymax = extent
+    x = np.round((r - xmin) / (xmax - xmin) * (w - 1)).astype(int)
+    y = np.round((ymax - p) / (ymax - ymin) * (h - 1)).astype(int)
+    keys = np.array(list(zone_rgb), dtype="<U1")
+    colors = np.stack([zone_rgb[k] for k in keys])
+    return keys[np.argmin(((img[y, x, :3][:, None] - colors) ** 2).sum(-1), axis=1)]
+
+
+def dts_confidence_intervals(
+    df,
+    dts_grid_path,
+    horizon_minutes=30,
+    by_split=False,
+    n_bootstrap=1000,
+    ci=95.0,
+    seed=42,
+    device="auto",
+    bootstrap_batch_size=256,
 ):
-    if device.startswith("cuda"):
-        return _bootstrap_metrics_torch(
-            pred, label, n_bootstrap, ci, seed, device, bootstrap_batch_size
-        )
-    return _bootstrap_metrics_numpy(
-        pred, label, n_bootstrap, ci, rng, bootstrap_batch_size
-    )
+    device = _resolve_device(device)
+    rng = np.random.default_rng(seed)
+    rows = []
+    for model, model_df, prediction_col in tqdm(
+        list(_iter_model_frames(df)), desc="Bootstrapping DTS CIs", unit="model"
+    ):
+        for split_type, split_df in _split_subsets(model_df, by_split):
+            hdf = split_df[split_df["horizon"] == horizon_minutes // 5]
+            hdf = hdf.dropna(subset=[prediction_col, "label"])
+            if hdf.empty:
+                continue
+            zones = _dts_zones(
+                hdf["label"].to_numpy(), hdf[prediction_col].to_numpy(), dts_grid_path)
+            row = {
+                "model": model,
+                "split_type": split_type,
+                "horizon_minutes": horizon_minutes,
+                "n_predictions": len(zones),
+            }
+            for name, mask in {**{z: zones == z for z in "ABCDE"}, "CDE": np.isin(zones, list("CDE"))}.items():
+                count = int(mask.sum())
+                pct, lower, upper = _bootstrap_mean_ci(
+                    mask.astype(np.float32) * 100, n_bootstrap, ci, rng,
+                    seed + len(rows), device, bootstrap_batch_size)
+                row.update({
+                    f"zone_{name}_count": count,
+                    f"zone_{name}_pct": pct,
+                    f"zone_{name}_ci_lower": lower,
+                    f"zone_{name}_ci_upper": upper,
+                })
+            rows.append(row)
+    return pd.DataFrame(rows)
 
 
 def _rows_for_subset(
@@ -312,6 +314,21 @@ def bootstrap_confidence_intervals(
     show_default=True,
     help="Where to save bootstrap confidence intervals.",
 )
+@click.option(
+    "--dts_output_path",
+    type=click.Path(path_type=Path),
+    default=Path("results/dts_zone_confidence_intervals.csv"),
+    show_default=True,
+    help="Where to save DTS zone confidence intervals.",
+)
+@click.option(
+    "--dts_grid_path",
+    type=click.Path(exists=True, path_type=Path),
+    default=Path("data/dts_grid.png"),
+    show_default=True,
+)
+@click.option("--dts_horizon_minutes", type=int, default=30, show_default=True)
+@click.option("--skip_dts", is_flag=True, help="Only calculate RMSE/MARD CIs.")
 @click.option("--n_bootstrap", type=int, default=1000, show_default=True)
 @click.option("--ci", type=float, default=95.0, show_default=True)
 @click.option("--seed", type=int, default=42, show_default=True)
@@ -340,6 +357,10 @@ def bootstrap_confidence_intervals(
 def main(
     input_path,
     output_path,
+    dts_output_path,
+    dts_grid_path,
+    dts_horizon_minutes,
+    skip_dts,
     n_bootstrap,
     ci,
     seed,
@@ -370,6 +391,26 @@ def main(
         ci_df.to_csv(output_path, index=False)
 
     print(f"Saved {len(ci_df)} confidence interval rows to {output_path}")
+
+    if not skip_dts:
+        dts_df = dts_confidence_intervals(
+            df,
+            dts_grid_path=dts_grid_path,
+            horizon_minutes=dts_horizon_minutes,
+            by_split=by_split,
+            n_bootstrap=n_bootstrap,
+            ci=ci,
+            seed=seed,
+            device=device,
+            bootstrap_batch_size=bootstrap_batch_size,
+        )
+        dts_output_path.parent.mkdir(parents=True, exist_ok=True)
+        if dts_output_path.suffix == ".parquet":
+            dts_df.to_parquet(
+                dts_output_path, index=False, engine="pyarrow", compression="zstd")
+        else:
+            dts_df.to_csv(dts_output_path, index=False)
+        print(f"Saved {len(dts_df)} DTS confidence interval rows to {dts_output_path}")
 
 
 if __name__ == "__main__":
