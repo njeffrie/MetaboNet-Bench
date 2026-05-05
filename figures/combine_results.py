@@ -351,9 +351,13 @@ def _iter_model_chunks_from_single_file(filepath: Path):
             tail = ', ...' if len(skipped) > 6 else ''
             print(f"  Skipped {len(skipped)} non-float columns (treated as auxiliary): {head}{tail}")
 
-        # Per model: read only (user_col, time_col, horizon, label, this_model_col).
-        # That mirrors the column set of a single per-model results file.
+        # Per model: read only (user_col, time_col, horizon, label, dataset?,
+        # this_model_col). That mirrors the column set of a single per-model
+        # results file. ``dataset`` is included when present so the downstream
+        # demographics merge (which keys on ``dataset``) can succeed.
         minimal_shared = [user_col, time_col, 'horizon', 'label']
+        if 'dataset' in cols_set:
+            minimal_shared.append('dataset')
         for model in model_cols:
             tbl = pq.read_table(
                 str(filepath), columns=minimal_shared + [model], use_threads=True,
@@ -362,7 +366,8 @@ def _iter_model_chunks_from_single_file(filepath: Path):
             del tbl
             sub = sub.rename(columns={model: 'prediction'})
             sub['model'] = model
-            sub['dataset'] = ''
+            if 'dataset' not in sub.columns:
+                sub['dataset'] = ''
             wide = _reshape_long_horizon_to_wide(sub)
             del sub
             yield wide

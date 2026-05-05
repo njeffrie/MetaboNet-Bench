@@ -16,22 +16,76 @@ FEATURE_COLORS = {
     'insulin+carbs': '#9467bd',  # purple     — CGM + insulin + carbs
 }
 
-# Models used for the feature-set ablation study (same architecture, varying inputs).
-# Plot scripts can filter to / exclude these via a shared --ablation flag.
+# Models used for the feature-set ablation study (same architecture, varying
+# inputs). Every architecture that has a feature-set ablation contributes 4
+# variants — CGM only, +carbs, +insulin, +insulin+carbs (full reference) —
+# although the naming convention varies slightly across archs (some use
+# ``-cgm-<feat>``, others just ``-<feat>``).
+#
+# ABLATION_MODELS         -> all 4 variants per arch (used by --ablation only).
+# ABLATION_MODELS_PARTIAL -> the 3 sub-variants per arch, *not* the full
+#                            *-insulin-carbs reference. --ablation exclude
+#                            drops these so the best variant per arch survives
+#                            alongside the non-ablation baselines (le, zoh, gluformer).
 ABLATION_MODELS = [
-    'gluforecast_glucose_only',
-    'gluforecast_carbs',
-    'gluforecast_insulin',
-    'gluforecast_insulin_carbs',
+    # gluforecast (uses '-cgm-<feat>' naming)
+    'gluforecast-cgm',
+    'gluforecast-cgm-carbs',
+    'gluforecast-cgm-insulin',
+    'gluforecast-cgm-insulin-carbs',
+    # lstm (uses '-cgm-<feat>' naming)
+    'lstm-cgm',
+    'lstm-cgm-carbs',
+    'lstm-cgm-insulin',
+    'lstm-cgm-insulin-carbs',
+    # units (uses '-cgm-<feat>' naming)
+    'units-cgm',
+    'units-cgm-carbs',
+    'units-cgm-insulin',
+    'units-cgm-insulin-carbs',
+    # lightgbm (uses '-<feat>' naming, with '-cgm' for CGM-only)
+    'lightgbm-cgm',
+    'lightgbm-carbs',
+    'lightgbm-insulin',
+    'lightgbm-insulin-carbs',
+    # ridge (uses '-<feat>' naming, with '-cgm' for CGM-only)
+    'ridge-cgm',
+    'ridge-carbs',
+    'ridge-insulin',
+    'ridge-insulin-carbs',
+]
+ABLATION_MODELS_PARTIAL = [
+    'gluforecast-cgm',
+    'gluforecast-cgm-carbs',
+    'gluforecast-cgm-insulin',
+    'lstm-cgm',
+    'lstm-cgm-carbs',
+    'lstm-cgm-insulin',
+    'units-cgm',
+    'units-cgm-carbs',
+    'units-cgm-insulin',
+    'lightgbm-cgm',
+    'lightgbm-carbs',
+    'lightgbm-insulin',
+    'ridge-cgm',
+    'ridge-carbs',
+    'ridge-insulin',
 ]
 
 
 def filter_ablation(models, mode: str):
-    """Apply ablation filtering. mode: 'only' keeps just ABLATION_MODELS; 'exclude' drops them; 'all' is a no-op."""
+    """Apply ablation filtering.
+
+    - 'only'    -> keep ABLATION_MODELS (all 4 variants per ablation arch).
+    - 'exclude' -> drop ABLATION_MODELS_PARTIAL (the 3 sub-variants per arch),
+                   leaving the *-insulin-carbs full reference per ablation arch
+                   plus the non-ablation baselines (le, zoh, gluformer).
+    - 'all'     -> no-op.
+    """
     if mode == 'only':
         return [m for m in models if m in ABLATION_MODELS]
     if mode == 'exclude':
-        return [m for m in models if m not in ABLATION_MODELS]
+        return [m for m in models if m not in ABLATION_MODELS_PARTIAL]
     return list(models)
 
 
@@ -154,7 +208,9 @@ def add_model_legend_below(fig, ax, ncol=None):
         framealpha=0.9,
     )
 
-# Color by architecture (alternative scheme for plots that show only one variant per arch)
+# Color by architecture (alternative scheme for plots that show only one variant per arch).
+# `le` is the new short name for the linear baseline; we keep `linear` styled too
+# so older combined parquets still render with the right color.
 ARCH_COLORS = {
     'lstm':        '#1f77b4',  # blue
     'gluforecast': '#9467bd',  # purple
@@ -162,6 +218,7 @@ ARCH_COLORS = {
     'gluformer':   '#ff7f0e',  # orange
     'lightgbm':    '#8c564b',  # brown
     'linear':      '#e377c2',  # pink
+    'le':          '#e377c2',  # pink (renamed from 'linear')
     'ridge':       '#7f7f7f',  # grey
     'zoh':         '#17becf',  # cyan
 }
@@ -174,6 +231,7 @@ ARCH_STYLES = {
     'gluformer':   {'marker': '^', 'linestyle': ':'},
     'lightgbm':    {'marker': 'v', 'linestyle': (0, (3, 1, 1, 1))},        # dashdotted
     'linear':      {'marker': 'P', 'linestyle': (0, (5, 1))},              # densely dashed
+    'le':          {'marker': 'P', 'linestyle': (0, (5, 1))},              # densely dashed (renamed from 'linear')
     'ridge':       {'marker': 'X', 'linestyle': (0, (1, 1))},              # densely dotted
     'zoh':         {'marker': '*', 'linestyle': (0, (3, 5, 1, 5, 1, 5))},  # dashdotdotted
 }
@@ -189,6 +247,7 @@ ARCH_DISPLAY_NAMES = {
     'gluformer':   'Gluformer',
     'lightgbm':    'LightGBM',
     'linear':      'Linear',
+    'le':          'LE',
     'ridge':       'Ridge',
     'zoh':         'ZOH',
 }
