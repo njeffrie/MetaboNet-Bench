@@ -33,7 +33,7 @@ python benchmark.py --model lstm,units,gluforecast --batch_size 16 --device cuda
 ```
 
 The local model names `lstm`, `units`, and `gluforecast` use the fully featured
-`*-cgm-insulin-carbs` checkpoints in `train/checkpoints/`.
+`*-cgm-insulin-carbs` checkpoints in `checkpoints/`.
 
 4. Combine model outputs and calculate summary metrics:
 
@@ -54,14 +54,14 @@ Use `--skip_dts` to omit DTS error-grid confidence intervals.
 
 ## Training workflow
 
-See [train/README.md](train/README.md) for preprocessing the train split, Optuna search, and training commands. Checkpoints are produced under `train/checkpoints/` for use with `benchmark.py`.
+See [train/README.md](train/README.md) for preprocessing the train split, Optuna search, and training commands. Checkpoints are produced under `checkpoints/` for use with `benchmark.py`.
 
 ## Benchmark custom models
 
 Create a model runner in `models/<model_name>.py` and register it in
 [`models/models.py`](models/models.py), then run `python benchmark.py --model=<model_name>`.
 
-See `models/gluformer.py` for an example. For Gluformer-style models you can share weights on the Hugging Face Hub (e.g. the pretrained [Gluformer model](https://huggingface.co/njeffrie/Gluformer)); local LSTM, UniTS, and GluForecast baselines use checkpoints from `train/checkpoints/` as described above.
+See `models/gluformer.py` for an example. For Gluformer-style models you can share weights on the Hugging Face Hub (e.g. the pretrained [Gluformer model](https://huggingface.co/njeffrie/Gluformer)); local LSTM, UniTS, and GluForecast baselines use checkpoints from `checkpoints/` as described above.
 
 ## Generate figures
 
