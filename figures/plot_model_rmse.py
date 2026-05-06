@@ -17,6 +17,7 @@ from model_styles import (
     get_marker_edge_kwargs,
     get_model_linestyle,
     get_model_marker,
+    line_style_for,
     add_figsize_arg,
     add_model_filter_args,
     add_model_legend_below,
@@ -88,13 +89,10 @@ def plot_rmse_by_timestep(
         ax.plot(
             model_data['minutes'],
             model_data['rmse'],
-            marker=get_model_marker(model),
             label=get_model_label(model, color_by=color_by),
             color=get_model_color_for(model, color_by=color_by),
-            linewidth=1.0,
-            markersize=5,
-            linestyle=get_model_linestyle(model),
             zorder=2 + i,
+            **line_style_for(model, color_by),
             **get_marker_edge_kwargs(),
         )
 
@@ -112,7 +110,7 @@ def plot_rmse_by_timestep(
     ax_right.tick_params(axis='y', labelsize=12)
     ax.set_title(
         'Glucose Prediction RMSE by Model and Time Horizon',
-        fontsize=15,
+        fontsize=18,
         fontweight='bold',
     )
 

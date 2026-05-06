@@ -19,15 +19,15 @@ mkdir -p "$OUT_DIR"
 echo "Writing figures to: $OUT_DIR"
 
 # Figure 3
-python figures/plot_rmse_by_bg.py --input "$INPUT" --combined --output "$OUT_DIR/rmse_vs_bg_h30.png" --horizon 30 --ylim 0 70
-python figures/plot_rmse_by_bg.py --input "$INPUT" --combined --output "$OUT_DIR/rmse_vs_bg_h60.png" --horizon 60 --ylim 0 70
+python figures/plot_rmse_by_bg.py --input "$INPUT" --combined --output "$OUT_DIR/rmse_vs_bg_h30.png" --horizon 30 --ylim 0 70 --figsize-support 7 5 --figsize 7 5 --legend none
+python figures/plot_rmse_by_bg.py --input "$INPUT" --combined --output "$OUT_DIR/rmse_vs_bg_h60.png" --horizon 60 --ylim 0 70 --figsize-support 7 5 --figsize 7 5 --legend right
 
 # Figure 4 + Supplemental D3 Figure 8
 python figures/plot_rmse_by_meal_presence.py --input "$INPUT" --output "$OUT_DIR/results_metabonet_bench_meal.png" --exclude-models zoh le gluformer --ablation only  --figsize 10 4 --figsize-diff 7 5
 python figures/plot_rmse_by_correction.py --input "$INPUT" --output "$OUT_DIR/results_metabonet_bench_correction.png" --exclude-models zoh le gluformer --ablation only --figsize 10 4 --figsize-diff 7 5
 
 # Figure 4 combined: meal-impact + correction-impact diff side-by-side, shared legend
-python figures/plot_meal_correction_combined.py --input "$INPUT" --output "$OUT_DIR/results_metabonet_bench_meal_correction_diff.png" --exclude-models zoh le gluformer --ablation only --figsize 14 5
+python figures/plot_meal_correction_combined.py --input combined_results_with_aux.parquet --exclude-models zoh le gluformer --ablation only --figsize 17 5 --legend-fontsize 16 --figsize-ablation 17 6
 
 # Figure 2 right
 python figures/plot_model_rmse.py --input "$INPUT" --output "$OUT_DIR/model_rmse_by_timestep.png" --ablation exclude

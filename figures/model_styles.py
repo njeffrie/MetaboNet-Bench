@@ -8,6 +8,28 @@ Encoding:
 
 import re
 
+import matplotlib as mpl
+
+# Use serif everywhere across the figures package. Importing this module is the
+# entry point for every plotting script, so setting rcParams here applies the
+# choice globally without each script needing to opt in.
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = [
+    'DejaVu Serif', 'Times New Roman', 'Times', 'Computer Modern Roman', 'serif',
+]
+mpl.rcParams['mathtext.fontset'] = 'dejavuserif'
+
+# Larger default text everywhere. Individual call sites can still override via
+# the ``fontsize=`` kwarg, but anywhere we don't pass an explicit fontsize will
+# now pick up these bigger defaults.
+mpl.rcParams['axes.titlesize'] = 16
+mpl.rcParams['axes.labelsize'] = 14
+mpl.rcParams['figure.titlesize'] = 18
+mpl.rcParams['xtick.labelsize'] = 12
+mpl.rcParams['ytick.labelsize'] = 12
+mpl.rcParams['legend.fontsize'] = 12
+mpl.rcParams['legend.title_fontsize'] = 13
+
 # Color by feature set
 FEATURE_COLORS = {
     'none':          '#1f77b4',  # blue       — CGM only
@@ -320,6 +342,30 @@ def get_model_color_by_arch(model: str) -> str:
     """Get color for a model keyed on architecture (use when plotting one variant per arch)."""
     arch, _ = _parse_model(model)
     return ARCH_COLORS.get(arch, '#000000')
+
+
+def line_style_for(model: str, color_by: str = 'arch') -> dict:
+    """Marker / linestyle / linewidth kwargs for a model, conditioned on color_by.
+
+    In ``feature`` (ablation) mode each architecture gets its own marker shape
+    and dash pattern so the encoding is rich. In ``arch`` mode (one variant per
+    architecture) every line is a thicker solid line with circle markers — the
+    color already disambiguates the architecture, so per-arch marker shapes
+    just add visual noise.
+    """
+    if color_by == 'feature':
+        return {
+            'marker': get_model_marker(model),
+            'linestyle': get_model_linestyle(model),
+            'linewidth': 1.2,
+            'markersize': 5,
+        }
+    return {
+        'marker': 'o',
+        'linestyle': '-',
+        'linewidth': 2.0,
+        'markersize': 6,
+    }
 
 
 def get_model_marker(model: str) -> str:

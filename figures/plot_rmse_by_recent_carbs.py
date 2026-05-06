@@ -23,6 +23,7 @@ from model_styles import (
     get_marker_edge_kwargs,
     get_model_linestyle,
     get_model_marker,
+    line_style_for,
     add_figsize_arg,
     add_model_filter_args,
     add_model_legend_below,
@@ -138,9 +139,7 @@ def main():
         ax2.plot(x, results[model],
                  label=get_model_label(model, color_by=color_by),
                  color=get_model_color_for(model, color_by=color_by),
-                 marker=get_model_marker(model),
-                 linestyle=get_model_linestyle(model),
-                 linewidth=1.0, markersize=5,
+                 **line_style_for(model, color_by),
                  **get_marker_edge_kwargs())
 
     ax2.set_xlabel('Time of Carb Intake (relative to prediction time)', fontsize=12)

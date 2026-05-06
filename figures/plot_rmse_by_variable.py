@@ -16,6 +16,7 @@ from model_styles import (
     get_marker_edge_kwargs,
     get_model_linestyle,
     get_model_marker,
+    line_style_for,
     add_figsize_arg,
     add_model_filter_args,
     add_model_legend_below,
@@ -175,13 +176,10 @@ def plot_rmse_all_models(
                 model_data['rmse'],
                 yerr=1.96 * model_data['rmse_std'],
                 color=get_model_color_for(model, color_by=color_by),
-                linewidth=1.0,
                 label=get_model_label(model, color_by=color_by),
-                marker=get_model_marker(model),
-                markersize=5,
-                linestyle=get_model_linestyle(model),
                 capsize=3,
                 elinewidth=0.8,
+                **line_style_for(model, color_by),
                 **get_marker_edge_kwargs(),
             )
 

@@ -5,6 +5,7 @@ Shows how prediction error varies with actual glucose level.
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -16,6 +17,7 @@ from model_styles import (
     get_marker_edge_kwargs,
     get_model_linestyle,
     get_model_marker,
+    line_style_for,
     add_figsize_arg,
     add_model_filter_args,
     add_model_legend_below,
@@ -209,16 +211,16 @@ def plot_rmse_vs_label(
         ax.set_xticks(_nice_xticks(xmin, xmax))
 
         if idx >= (rows - 1) * cols:
-            ax.set_xlabel('CGM at Prediction (mg/dL)', fontsize=10)
+            ax.set_xlabel('Reference CGM (mg/dL)', fontsize=12)
         if idx % cols == 0:
-            ax.set_ylabel('RMSE (mg/dL)', fontsize=10)
+            ax.set_ylabel('RMSE (mg/dL)', fontsize=12)
 
     # Hide unused subplots
     for idx in range(n_models, len(axes)):
         axes[idx].set_visible(False)
 
     title = f'RMSE vs Reference CGM at {horizon_minutes}min Horizon'
-    fig.suptitle(title, fontsize=14, fontweight='bold')
+    fig.suptitle(title, fontsize=18, fontweight='bold')
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(output_path, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
@@ -237,6 +239,8 @@ def plot_rmse_vs_label_combined(
     bg_min: float = 39.0,
     bg_max: float | None = None,
     ylim: tuple | None = None,
+    legend: str = 'right',
+    legend_fontsize: int = 14,
 ) -> None:
     """
     Create a single plot with all models' binned RMSE curves and CIs.
@@ -270,17 +274,16 @@ def plot_rmse_vs_label_combined(
         )
 
         color = get_model_color_for(model, color_by=color_by)
-        ax.plot(bin_centers, rmse_values, color=color, linewidth=1.0,
+        ax.plot(bin_centers, rmse_values, color=color,
                 label=get_model_label(model, color_by=color_by),
-                linestyle=get_model_linestyle(model),
-                marker=get_model_marker(model),
-                markersize=5, markevery=5,
+                markevery=5,
+                **line_style_for(model, color_by),
                 **get_marker_edge_kwargs())
         ax.fill_between(bin_centers, rmse_values - ci_mult * rmse_sems, rmse_values + ci_mult * rmse_sems, color=color, alpha=0.15)
 
-    ax.set_xlabel('CGM at Prediction (mg/dL)', fontsize=12)
-    ax.set_ylabel('RMSE (mg/dL)', fontsize=12)
-    ax.set_title(f'RMSE vs CGM at Prediction for {horizon_minutes}min Horizon', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Reference CGM (mg/dL)', fontsize=14)
+    ax.set_ylabel('RMSE (mg/dL)', fontsize=14)
+    ax.set_title(f'RMSE vs Reference CGM at {horizon_minutes}min Horizon', fontsize=17, fontweight='bold')
     xmin, xmax = _label_xrange(error_df, bg_min=bg_min, bg_max=bg_max)
     ax.set_xlim(xmin, xmax)
     ax.set_xticks(_nice_xticks(xmin, xmax))
@@ -289,10 +292,59 @@ def plot_rmse_vs_label_combined(
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    if color_by == 'feature':
-        add_legends_below(fig, ax)
-    else:
-        add_model_legend_below(fig, ax)
+    if legend == 'none':
+        pass
+    elif legend == 'right':
+        # Single combined legend stacked to the right of the axes.
+        handles, labels = ax.get_legend_handles_labels()
+        if color_by == 'feature':
+            from model_styles import (
+                _parse_model as _pm,
+                ARCH_STYLES as _AS,
+                FEATURE_COLORS as _FC,
+                get_arch_legend_handles as _arch_h,
+                get_feature_legend_handles as _feat_h,
+            )
+            parsed = [_pm(label) for label in labels]
+            archs_present = [a for a in _AS.keys() if a in [p[0] for p in parsed]] or list(_AS.keys())
+            feats_present = [k for k in _FC.keys() if k in [p[1] for p in parsed]] or list(_FC.keys())
+            common = dict(
+                fontsize=legend_fontsize,
+                title_fontsize=legend_fontsize + 1,
+                framealpha=0.9,
+                borderpad=0.6,
+                handlelength=2.5,
+                handletextpad=0.6,
+            )
+            feat_legend = ax.legend(
+                handles=_feat_h(feats_present),
+                title='Feature set',
+                loc='upper left',
+                bbox_to_anchor=(1.02, 1.0),
+                **common,
+            )
+            ax.add_artist(feat_legend)
+            ax.legend(
+                handles=_arch_h(archs_present),
+                title='Architecture',
+                loc='upper left',
+                bbox_to_anchor=(1.02, 0.55),
+                **common,
+            )
+        else:
+            ax.legend(
+                handles, labels,
+                loc='upper left',
+                bbox_to_anchor=(1.02, 1.0),
+                fontsize=legend_fontsize,
+                framealpha=0.9,
+                borderpad=0.6,
+            )
+    else:  # 'below' (legacy default)
+        if color_by == 'feature':
+            add_legends_below(fig, ax)
+        else:
+            add_model_legend_below(fig, ax)
     fig.savefig(output_path, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
 
@@ -327,11 +379,11 @@ def plot_label_support(
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.bar(bin_centers, counts, width=bin_width * 0.9, color='steelblue', edgecolor='none')
-    ax.set_xlabel('Reference CGM (mg/dL)', fontsize=12)
-    ax.set_ylabel('Samples', fontsize=12)
+    ax.set_xlabel('Reference CGM (mg/dL)', fontsize=14)
+    ax.set_ylabel('Samples', fontsize=14)
     ax.set_title(
         f'Reference CGM Distribution (n = {len(labels):,})',
-        fontsize=13, fontweight='bold',
+        fontsize=17, fontweight='bold',
     )
     ax.set_xlim(xmin, xmax)
     ax.set_xticks(_nice_xticks(xmin, xmax))
@@ -402,6 +454,18 @@ def main():
         metavar=('YMIN', 'YMAX'),
         help="Y-axis limits for the combined RMSE plot (e.g. --ylim 0 70)",
     )
+    parser.add_argument(
+        "--legend",
+        choices=['right', 'below', 'none'],
+        default='right',
+        help="Legend placement for the combined plot (default: right)",
+    )
+    parser.add_argument(
+        "--legend-fontsize",
+        type=int,
+        default=14,
+        help="Legend body font size for the combined plot (default: 14)",
+    )
     add_model_filter_args(parser)
     add_figsize_arg(parser, default=(10.0, 6.0), help_suffix=' [combined mode]')
     add_figsize_arg(parser, name='--figsize-grid', default=(14.0, 10.0), help_suffix=' [grid mode]')
@@ -444,6 +508,8 @@ def main():
             n_bins=args.n_bins, color_by=color_by,
             bg_min=args.bg_min, bg_max=args.bg_max,
             ylim=tuple(args.ylim) if args.ylim is not None else None,
+            legend=args.legend,
+            legend_fontsize=args.legend_fontsize,
         )
     else:
         plot_rmse_vs_label(
@@ -454,11 +520,17 @@ def main():
             bg_min=args.bg_min, bg_max=args.bg_max,
         )
 
-    # Always emit a companion support bar chart alongside the main figure.
+    # Always emit a companion support bar chart at the same dimensions as the
+    # main figure so the two PNGs share an identical footprint when stacked.
+    # --figsize-support is only honored if the user passes it explicitly.
     support_output = args.output.with_stem(args.output.stem + '_support')
+    main_figsize = tuple(args.figsize) if args.combined else tuple(args.figsize_grid)
+    support_figsize = (
+        tuple(args.figsize_support) if '--figsize-support' in sys.argv else main_figsize
+    )
     plot_label_support(
         error_df, args.horizon, support_output,
-        figsize=tuple(args.figsize_support),
+        figsize=support_figsize,
         n_bins=args.n_bins,
         bg_min=args.bg_min, bg_max=args.bg_max,
     )
