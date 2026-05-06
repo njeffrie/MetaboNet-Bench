@@ -64,7 +64,7 @@ See [train/README.md](train/README.md) for preprocessing the train split, Optuna
 Create a model runner in `models/<model_name>.py` and register it in
 [`models/models.py`](models/models.py), then run `python benchmark.py --model=<model_name>`.
 
-See `models/gluformer.py` for an example. For Gluformer-style models you can share weights on the Hugging Face Hub (e.g. the pretrained [Gluformer model](https://huggingface.co/njeffrie/Gluformer)); local LSTM, UniTS, and GluForecast baselines use checkpoints from `checkpoints/` as described above.
+See `models/gluformer.py` for an example. For Gluformer-style models you can share weights on the Hugging Face Hub (e.g. the pretrained [Gluformer model](https://huggingface.co/anonymous-4FAD/Gluformer)); local LSTM, UniTS, and GluForecast baselines use checkpoints from `checkpoints/` as described above.
 
 ## Generate figures
 

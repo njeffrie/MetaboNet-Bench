@@ -25,9 +25,9 @@ _ABLATION_MODELS = {
 
 def get_model(name, device='cpu'):
     if name == 'gluformer':
-        return Gluformer('njeffrie/Gluformer', device)
+        return Gluformer('anonymous-4FAD/Gluformer', device)
     elif name == 'gluformer-tiny':
-        return Gluformer('njeffrie/Gluformer-tiny', device)
+        return Gluformer('anonymous-4FAD/Gluformer-tiny', device)
     elif name == 'zoh':
         return ZeroOrderHold()
     elif name == 'le':

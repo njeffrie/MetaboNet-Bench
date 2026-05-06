@@ -6,7 +6,7 @@ import pandas as pd
 
 class Gluformer:
 
-    def __init__(self, huggingface_model_name: str = 'njeffrie/Gluformer', device='cpu'):
+    def __init__(self, huggingface_model_name: str = 'anonymous-4FAD/Gluformer', device='cpu'):
         self.model = AutoModel.from_pretrained(huggingface_model_name,
                                                trust_remote_code=True, force_download=True)
         self.config = AutoConfig.from_pretrained(huggingface_model_name,
