@@ -5,7 +5,7 @@ from models.lstm import LSTM
 from models.UniTS import UniTS
 from models.gluforecast import GluForecast
 
-ABLATION_CKPT_DIR = 'train/checkpoints'
+ABLATION_CKPT_DIR = 'checkpoints'
 
 _ABLATION_MODELS = {
     'lstm-cgm':               ('lstm', 'cgm'),

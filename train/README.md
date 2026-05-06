@@ -37,7 +37,7 @@ python -m train.train \
 
 Optional flags (CUDA): `--amp --tf32` on both commands.
 
-Checkpoints are written under `train/checkpoints/` (layout may include a nested `checkpoints/` directory depending on your setup). The benchmark loads ablation weights from `train/checkpoints/` via [models/models.py](../models/models.py).
+Checkpoints are written under `checkpoints/` at the repo root (layout may include a nested `checkpoints/` directory depending on your setup). The benchmark loads ablation weights from `checkpoints/` via [models/models.py](../models/models.py).
 
 ## Convenience script
 

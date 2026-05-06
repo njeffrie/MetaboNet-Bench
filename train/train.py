@@ -319,7 +319,7 @@ class TrainJobConfig:
     model_type: str
     feature_set: str
     device: str = 'cpu'
-    checkpoint_dir: str = 'train/checkpoints'
+    checkpoint_dir: str = 'checkpoints'
     num_workers: int | None = None
     use_amp: bool = False
     use_tf32: bool = False
