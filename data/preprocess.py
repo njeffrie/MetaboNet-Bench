@@ -1,11 +1,8 @@
-import os
 from tqdm import tqdm
-from datasets import Dataset
 import pandas as pd
 import numpy as np
-import zipfile
 import click
-import dataset_info
+from pathlib import Path
 from dataset_processors import metabonet
 
 
@@ -50,7 +47,7 @@ class DatsetPreprocessor:
                     limit=6,
                     limit_area='inside')
                 mask = patient_data['CGM'].isna()
-                mask = mask.where(mask, other=np.nan).infer_objects(copy=False)
+                mask = mask.where(mask, other=np.nan).infer_objects()
                 mask = mask.bfill(limit=6, limit_area='outside')
                 mask = mask.isna()
                 patient_data['CGM'] = patient_data['CGM'].where(mask, other=np.nan)
@@ -76,11 +73,12 @@ class DatsetPreprocessor:
 
     def save_data(self):
         split = 'test' if 'test' in self.dataset_path else 'train'
+        output_path = Path(self.dataset_path).parent / f'metabonet_{split}.parquet'
         self.dataset.to_parquet(
-        f'metabonet_{split}.parquet',
-        engine="pyarrow",
-        compression="zstd",
-        index=False)
+            output_path,
+            engine="pyarrow",
+            compression="zstd",
+            index=False)
 
 
 @click.command()

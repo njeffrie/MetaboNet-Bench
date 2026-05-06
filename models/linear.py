@@ -2,7 +2,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression as SKLLinearRegression
 
 
-class LinearRegression:
+class LinearExtrapolation:
 
     def __init__(self, lookback_window: int):
         # Lookback window is in minutes, so we divide by 5 to get the number of 5-minute intervals

@@ -17,6 +17,13 @@ def calculate_unfold_output_length(input_length, size, step):
     return num_windows
 
 
+# Apple Silicon (MPS): F.scaled_dot_product_attention returns the wrong shape when
+# value.shape[-1] != query.shape[-1]. UniTS VarAttention relies on that pattern.
+# Issue: https://github.com/pytorch/pytorch/issues/176767
+# Fix (track availability for your torch version): https://github.com/pytorch/pytorch/pull/176843
+_UNITS_MPS_FALLBACK_WARNED = False
+
+
 class CrossAttention(nn.Module):
     def __init__(
             self,
@@ -535,7 +542,7 @@ class ForecastHead(nn.Module):
         self.patch_len = patch_len
         self.stride = stride
         self.pos_proj = DynamicLinear(
-            in_features=128, out_features=128, fixed_in=prefix_token_length)
+            in_features=d_model, out_features=d_model, fixed_in=prefix_token_length)
 
     def forward(self, x_full, pred_len, token_len):
         x_full = self.proj_in(x_full)
@@ -623,7 +630,8 @@ class Model(nn.Module):
         self.patch_embeddings = PatchEmbedding(
             args.d_model, args.patch_len, args.stride, args.stride, args.dropout)
         self.position_embedding = LearnablePositionalEmbedding(args.d_model)
-        self.prompt2forecat = DynamicLinear(128, 128, fixed_in=args.prompt_num)
+        self.prompt2forecat = DynamicLinear(
+            args.d_model, args.d_model, fixed_in=args.prompt_num)
 
         # basic blocks
         self.block_num = args.e_layers
@@ -965,26 +973,131 @@ class Model(nn.Module):
         return None
 
 
-class UniTS:
-    def __init__(self, model_path, device='cpu'):
-        configs_list = ['CGM', {'task_name': 'long_term_forecast', 'seq_len': 180, 'pred_len':12}]
-        class Args:
-            d_model = 128
-            n_heads = 8
-            e_layers = 2
-            patch_len = 16
-            stride = 16
-            prompt_num = 10
-            dropout = 0.1
-        self.model = Model(configs_list=[configs_list], args = Args())
-        ckpt = torch.load(model_path, weights_only=False, map_location=device)
-        missing, unexpected = self.model.load_state_dict(ckpt, strict=False)
-        self.model.eval()
-        self.device = device
-        self.model.to(device)
+FEATURE_COLUMNS = {
+    'cgm': ['CGM'],
+    'cgm_insulin': ['CGM', 'Insulin'],
+    'cgm_carbs': ['CGM', 'Carbs'],
+    'cgm_insulin_carbs': ['CGM', 'Insulin', 'Carbs'],
+}
 
-    def predict(self, ts, cgm, insulin, carbs):
-        batch_size = cgm.shape[0]
-        x = torch.tensor(np.array(cgm)).float().reshape(batch_size, -1, 1).to(self.device)
-        out = self.model(x_enc=x, x_mark_enc=None, task_id=0, task_name='long_term_forecast').detach().cpu().numpy().reshape(batch_size, -1)
-        return out
+
+class _DefaultUniTSHParams:
+    d_model = 128
+    n_heads = 8
+    e_layers = 2
+    patch_len = 16
+    prompt_num = 10
+    dropout = 0.1
+
+
+def _units_hparams_from_ckpt(d: dict):
+    class H:
+        pass
+
+    hparams = H()
+    for k, v in d.items():
+        setattr(hparams, k, v)
+    if not hasattr(hparams, 'patch_len'):
+        hparams.patch_len = 16
+    if not hasattr(hparams, 'stride'):
+        hparams.stride = hparams.patch_len
+    return hparams
+
+
+def _args_from_units_hparams(hparams):
+    class Args:
+        pass
+
+    args = Args()
+    args.d_model = hparams.d_model
+    args.n_heads = hparams.n_heads
+    args.e_layers = hparams.e_layers
+    args.patch_len = hparams.patch_len
+    args.stride = hparams.patch_len
+    args.prompt_num = hparams.prompt_num
+    args.dropout = hparams.dropout
+    return args
+
+
+def build_units_model(units_hparams, seq_len=180, pred_len=12):
+    args = _args_from_units_hparams(units_hparams)
+    configs_list = [
+        'CGM',
+        {'task_name': 'long_term_forecast', 'seq_len': seq_len, 'pred_len': pred_len},
+    ]
+    return UniTS(args=args, configs_list=[configs_list])
+
+
+class UniTS(Model):
+    """UniTS model with optional checkpoint-backed benchmark inference.
+
+    Requesting ``device='mps'`` is redirected to CPU: MPS SDPA mishandles this
+    model's q/k vs value head dims (see module comment above PyTorch #176767).
+    """
+
+    def __init__(
+        self,
+        checkpoint_path=None,
+        feature_set='cgm_insulin_carbs',
+        device='cpu',
+        *,
+        args=None,
+        configs_list=None,
+        pretrain=False,
+    ):
+        global _UNITS_MPS_FALLBACK_WARNED
+        infer_device = device
+        if str(device).lower().strip() == 'mps':
+            infer_device = 'cpu'
+            if not _UNITS_MPS_FALLBACK_WARNED:
+                _UNITS_MPS_FALLBACK_WARNED = True
+                print(
+                    'UniTS: device=mps is not supported; using CPU. '
+                    'MPS scaled_dot_product_attention can return the wrong shape when '
+                    'the value embedding dim differs from query/key '
+                    '(https://github.com/pytorch/pytorch/issues/176767). '
+                    'Upstream fix: https://github.com/pytorch/pytorch/pull/176843 '
+                    '(upgrade PyTorch once released for your stack).'
+                )
+
+        if checkpoint_path is not None:
+            ckpt = torch.load(checkpoint_path, map_location=infer_device, weights_only=True)
+            hparams = (
+                _units_hparams_from_ckpt(ckpt['units_hparams'])
+                if ckpt.get('units_hparams') is not None
+                else _DefaultUniTSHParams()
+            )
+            args = _args_from_units_hparams(hparams)
+            configs_list = [[
+                'CGM',
+                {
+                    'task_name': 'long_term_forecast',
+                    'seq_len': ckpt.get('seq_len', 180),
+                    'pred_len': ckpt.get('pred_len', 12),
+                },
+            ]]
+        if args is None or configs_list is None:
+            raise ValueError('UniTS requires args/configs_list or checkpoint_path')
+
+        super().__init__(args=args, configs_list=configs_list, pretrain=pretrain)
+        self.feature_set = feature_set
+        self.feature_cols = FEATURE_COLUMNS[feature_set]
+        self.device = infer_device
+
+        if checkpoint_path is not None:
+            self.load_state_dict(ckpt['model_state_dict'])
+            self.to(infer_device)
+            self.eval()
+
+    def predict(self, timestamps, cgm, insulin, carbs):
+        channels = {'CGM': cgm, 'Insulin': insulin, 'Carbs': carbs}
+        x = np.stack([channels[c] for c in self.feature_cols], axis=-1)
+        x_t = torch.tensor(x, dtype=torch.float32, device=self.device)
+
+        with torch.no_grad():
+            out = self(
+                x_enc=x_t, x_mark_enc=None,
+                task_id=0, task_name='long_term_forecast',
+            )
+        out = out[:, :, 0] if out.ndim == 3 else out
+        return out.detach().cpu().numpy().reshape(cgm.shape[0], -1)

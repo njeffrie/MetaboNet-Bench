@@ -1,10 +1,9 @@
 # MetaboNet Benchmark
 
-This benchmark provides a framework to fairly evaulate blood glucose prediction models for Type 1 Diabetes.
+Code for reproducing MetaboNet paper benchmarks and training the local LSTM,
+UniTS, and GluForecast baselines.
 
-## Installation
-
-1. Install the required dependencies:
+## Setup
 
 ```bash
 uv venv .env
@@ -12,28 +11,60 @@ source .env/bin/activate
 uv pip install -r requirements.txt
 ```
 
-Download [metabonet](https://metabo-net.org/) to `data/downloads`
+Download the public MetaboNet splits from [metabo-net.org](https://metabo-net.org/).
 
+## Benchmark workflow
 
-Run the extraction and preprocessing scripts (may take a few minutes):
+1. Download the MetaboNet test split and place it at
+   `data/metabonet_public_test.parquet`.
+
+2. Preprocess the test split:
+
 ```bash
-cd data
-python preprocess.py
-cd ..
+python data/preprocess.py --path_to_dataset data/metabonet_public_test.parquet
 ```
 
-## Run the benchmark
+This writes `data/metabonet_test.parquet`.
 
-For example:
+3. Run the benchmark for one or more models:
+
 ```bash
-python benchmark.py --model gluforecast --batch_size 16 --device mps
+python benchmark.py --model lstm,units,gluforecast --batch_size 16 --device cuda
 ```
 
-## Benchmark Custom Models
+The local model names `lstm`, `units`, and `gluforecast` use the fully featured
+`*-cgm-insulin-carbs` checkpoints in `checkpoints/`.
 
-Create a model runner in `models/<model_name>.py` and add your model to the model name to runner dictionary in `models/model.py` then run the benchmark with `python benchmark.py --model=<model_name>`
+On Apple Silicon, `--device mps` still applies to LSTM and GluForecast. UniTS (`units`)
+redirects to CPU automatically: PyTorch MPS `scaled_dot_product_attention` misreports output shape when the value dim differs from query/key ([issue](https://github.com/pytorch/pytorch/issues/176767), [fix PR](https://github.com/pytorch/pytorch/pull/176843)).
 
-See models/gluformer for an example. It is strongly encouraged to share the model with weights on huggingface hub. See the pretrained [Gluformer model](https://huggingface.co/njeffrie/Gluformer) for an example.
+4. Combine model outputs and calculate summary metrics:
+
+```bash
+python results_eval.py --results_dir results --output_path results/combined_results.parquet
+```
+
+5. Optionally calculate bootstrapped confidence intervals:
+
+```bash
+python calculate_metrics_with_ci.py \
+  --input_path results/combined_results.parquet \
+  --output_path results/metrics_with_ci.csv \
+  --device cuda
+```
+
+Use `--skip_dts` to omit DTS error-grid confidence intervals.
+
+## Training workflow
+
+See [train/README.md](train/README.md) for preprocessing the train split, Optuna search, and training commands. Checkpoints are produced under `checkpoints/` for use with `benchmark.py`.
+
+## Benchmark custom models
+
+Create a model runner in `models/<model_name>.py` and register it in
+[`models/models.py`](models/models.py), then run `python benchmark.py --model=<model_name>`.
+
+See `models/gluformer.py` for an example. For Gluformer-style models you can share weights on the Hugging Face Hub (e.g. the pretrained [Gluformer model](https://huggingface.co/anonymous-4FAD/Gluformer)); local LSTM, UniTS, and GluForecast baselines use checkpoints from `checkpoints/` as described above.
 
 ## Generate figures
 
