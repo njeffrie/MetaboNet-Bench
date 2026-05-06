@@ -92,6 +92,11 @@ def main():
         metavar=('W', 'H'),
         help="Figure size (inches) for the difference plot (default: 12 7)",
     )
+    parser.add_argument(
+        "--no-legend",
+        action="store_true",
+        help="Suppress the legend on both the side-by-side and difference plots",
+    )
     args = parser.parse_args()
 
     h_min_min, h_max_min = args.horizons
@@ -209,10 +214,11 @@ def main():
 
     plt.suptitle('Model RMSE During Hyperglycemia: With vs Without Corrective Bolus', fontsize=14, y=1.02)
     plt.tight_layout()
-    if color_by == 'feature':
-        add_legends_below(fig, ax1)
-    else:
-        add_model_legend_below(fig, ax1)
+    if not args.no_legend:
+        if color_by == 'feature':
+            add_legends_below(fig, ax1)
+        else:
+            add_model_legend_below(fig, ax1)
     plt.savefig(args.output, dpi=150, bbox_inches='tight')
     print(f"\nSaved plot to {args.output}")
 
@@ -241,10 +247,11 @@ def main():
 
     diff_output = args.output.with_stem(args.output.stem + '_diff')
     plt.tight_layout()
-    if color_by == 'feature':
-        add_legends_below(fig2, ax3)
-    else:
-        add_model_legend_below(fig2, ax3)
+    if not args.no_legend:
+        if color_by == 'feature':
+            add_legends_below(fig2, ax3)
+        else:
+            add_model_legend_below(fig2, ax3)
     plt.savefig(diff_output, dpi=150, bbox_inches='tight')
     print(f"Saved difference plot to {diff_output}")
 

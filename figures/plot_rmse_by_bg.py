@@ -236,6 +236,7 @@ def plot_rmse_vs_label_combined(
     color_by: str = 'arch',
     bg_min: float = 39.0,
     bg_max: float | None = None,
+    ylim: tuple | None = None,
 ) -> None:
     """
     Create a single plot with all models' binned RMSE curves and CIs.
@@ -283,6 +284,8 @@ def plot_rmse_vs_label_combined(
     xmin, xmax = _label_xrange(error_df, bg_min=bg_min, bg_max=bg_max)
     ax.set_xlim(xmin, xmax)
     ax.set_xticks(_nice_xticks(xmin, xmax))
+    if ylim is not None:
+        ax.set_ylim(ylim)
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
@@ -391,6 +394,14 @@ def main():
         default=None,
         help="Output plot file (auto-generated if not specified)",
     )
+    parser.add_argument(
+        "--ylim",
+        type=float,
+        nargs=2,
+        default=None,
+        metavar=('YMIN', 'YMAX'),
+        help="Y-axis limits for the combined RMSE plot (e.g. --ylim 0 70)",
+    )
     add_model_filter_args(parser)
     add_figsize_arg(parser, default=(10.0, 6.0), help_suffix=' [combined mode]')
     add_figsize_arg(parser, name='--figsize-grid', default=(14.0, 10.0), help_suffix=' [grid mode]')
@@ -432,6 +443,7 @@ def main():
             figsize=tuple(args.figsize),
             n_bins=args.n_bins, color_by=color_by,
             bg_min=args.bg_min, bg_max=args.bg_max,
+            ylim=tuple(args.ylim) if args.ylim is not None else None,
         )
     else:
         plot_rmse_vs_label(
