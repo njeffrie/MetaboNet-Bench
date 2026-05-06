@@ -35,6 +35,9 @@ python benchmark.py --model lstm,units,gluforecast --batch_size 16 --device cuda
 The local model names `lstm`, `units`, and `gluforecast` use the fully featured
 `*-cgm-insulin-carbs` checkpoints in `checkpoints/`.
 
+On Apple Silicon, `--device mps` still applies to LSTM and GluForecast. UniTS (`units`)
+redirects to CPU automatically: PyTorch MPS `scaled_dot_product_attention` misreports output shape when the value dim differs from query/key ([issue](https://github.com/pytorch/pytorch/issues/176767), [fix PR](https://github.com/pytorch/pytorch/pull/176843)).
+
 4. Combine model outputs and calculate summary metrics:
 
 ```bash

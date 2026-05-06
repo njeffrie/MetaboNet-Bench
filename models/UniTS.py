@@ -17,6 +17,13 @@ def calculate_unfold_output_length(input_length, size, step):
     return num_windows
 
 
+# Apple Silicon (MPS): F.scaled_dot_product_attention returns the wrong shape when
+# value.shape[-1] != query.shape[-1]. UniTS VarAttention relies on that pattern.
+# Issue: https://github.com/pytorch/pytorch/issues/176767
+# Fix (track availability for your torch version): https://github.com/pytorch/pytorch/pull/176843
+_UNITS_MPS_FALLBACK_WARNED = False
+
+
 class CrossAttention(nn.Module):
     def __init__(
             self,
@@ -1022,7 +1029,11 @@ def build_units_model(units_hparams, seq_len=180, pred_len=12):
 
 
 class UniTS(Model):
-    """UniTS model with optional checkpoint-backed benchmark inference."""
+    """UniTS model with optional checkpoint-backed benchmark inference.
+
+    Requesting ``device='mps'`` is redirected to CPU: MPS SDPA mishandles this
+    model's q/k vs value head dims (see module comment above PyTorch #176767).
+    """
 
     def __init__(
         self,
@@ -1034,8 +1045,23 @@ class UniTS(Model):
         configs_list=None,
         pretrain=False,
     ):
+        global _UNITS_MPS_FALLBACK_WARNED
+        infer_device = device
+        if str(device).lower().strip() == 'mps':
+            infer_device = 'cpu'
+            if not _UNITS_MPS_FALLBACK_WARNED:
+                _UNITS_MPS_FALLBACK_WARNED = True
+                print(
+                    'UniTS: device=mps is not supported; using CPU. '
+                    'MPS scaled_dot_product_attention can return the wrong shape when '
+                    'the value embedding dim differs from query/key '
+                    '(https://github.com/pytorch/pytorch/issues/176767). '
+                    'Upstream fix: https://github.com/pytorch/pytorch/pull/176843 '
+                    '(upgrade PyTorch once released for your stack).'
+                )
+
         if checkpoint_path is not None:
-            ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
+            ckpt = torch.load(checkpoint_path, map_location=infer_device, weights_only=True)
             hparams = (
                 _units_hparams_from_ckpt(ckpt['units_hparams'])
                 if ckpt.get('units_hparams') is not None
@@ -1056,11 +1082,11 @@ class UniTS(Model):
         super().__init__(args=args, configs_list=configs_list, pretrain=pretrain)
         self.feature_set = feature_set
         self.feature_cols = FEATURE_COLUMNS[feature_set]
-        self.device = device
+        self.device = infer_device
 
         if checkpoint_path is not None:
             self.load_state_dict(ckpt['model_state_dict'])
-            self.to(device)
+            self.to(infer_device)
             self.eval()
 
     def predict(self, timestamps, cgm, insulin, carbs):
