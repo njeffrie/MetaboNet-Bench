@@ -1,3 +1,12 @@
+# Pre-import lightgbm before anything that drags in torch so the Ridge/LightGBM
+# Hub paths work on macOS (libomp clashes with torch's OpenMP otherwise; see
+# models/lightgbm.py). The import is optional — if lightgbm isn't installed,
+# the LightGBM Hub model just won't be usable.
+try:
+    import lightgbm  # noqa: F401
+except ImportError:
+    pass
+
 from models.gluformer import Gluformer
 from models.zoh import ZeroOrderHold
 from models.linear import LinearExtrapolation
@@ -6,6 +15,9 @@ from models.UniTS import UniTS
 from models.gluforecast import GluForecast
 
 ABLATION_CKPT_DIR = 'checkpoints'
+
+HF_HUB_RIDGE = 'anonymous-4FAD/Ridge'
+HF_HUB_LIGHTGBM = 'anonymous-4FAD/LightGBM'
 
 _ABLATION_MODELS = {
     'lstm-cgm':               ('lstm', 'cgm'),
@@ -23,6 +35,13 @@ _ABLATION_MODELS = {
 }
 
 
+def _split_ablation(name: str, prefix: str) -> str:
+    """Return ``ablation`` from ``<prefix>`` or ``<prefix>-<ablation>``."""
+    if name == prefix:
+        return 'all'
+    return name[len(prefix) + 1:]  # strip "<prefix>-"
+
+
 def get_model(name, device='cpu'):
     if name == 'gluformer':
         return Gluformer('anonymous-4FAD/Gluformer', device)
@@ -32,6 +51,22 @@ def get_model(name, device='cpu'):
         return ZeroOrderHold()
     elif name == 'le':
         return LinearExtrapolation(15)
+    elif name == 'ridge' or name.startswith('ridge-'):
+        from models.ridge import Ridge as RidgeRunner
+        return RidgeRunner(
+            huggingface_model_name='anonymous-4FAD/Ridge',
+            ablation=_split_ablation(name, 'ridge'),
+            device=device,
+        )
+    elif name == 'lightgbm' or name.startswith('lightgbm-'):
+        from models.lightgbm import LightGBM as LightGBMRunner
+        # Bare ``lightgbm`` uses the repo default ablation from config.json.
+        ablation = None if name == 'lightgbm' else _split_ablation(name, 'lightgbm')
+        return LightGBMRunner(
+            huggingface_model_name='anonymous-4FAD/LightGBM',
+            ablation=ablation,
+            device=device,
+        )
     elif name in {'lstm', 'units', 'gluforecast'}:
         name = f'{name}-cgm-insulin-carbs'
 
