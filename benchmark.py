@@ -1,4 +1,4 @@
-from models.models import get_model
+from models.models import HF_HUB_LIGHTGBM, HF_HUB_RIDGE, get_model
 import numpy as np
 import pandas as pd
 from tqdm import tqdm

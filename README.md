@@ -32,6 +32,8 @@ This writes `data/metabonet_test.parquet`.
 python benchmark.py --model lstm,units,gluforecast --batch_size 16 --device cuda
 ```
 
+Tabular Ridge and LightGBM baselines load from the Hugging Face Hub ([Ridge](https://huggingface.co/anonymous-4FAD/Ridge), [LightGBM](https://huggingface.co/anonymous-4FAD/LightGBM)); use e.g. `--model ridge,ridge-cgm,lightgbm-insulin` (`ridge` / `lightgbm` alone selects the `all` ablation).
+
 The local model names `lstm`, `units`, and `gluforecast` use the fully featured
 `*-cgm-insulin-carbs` checkpoints in `checkpoints/`.
 
@@ -65,6 +67,24 @@ Create a model runner in `models/<model_name>.py` and register it in
 [`models/models.py`](models/models.py), then run `python benchmark.py --model=<model_name>`.
 
 See `models/gluformer.py` for an example. For Gluformer-style models you can share weights on the Hugging Face Hub (e.g. the pretrained [Gluformer model](https://huggingface.co/anonymous-4FAD/Gluformer)); local LSTM, UniTS, and GluForecast baselines use checkpoints from `checkpoints/` as described above.
+
+### Ridge and LightGBM (tabular baselines)
+
+The Ridge and LightGBM baselines trained under [other_models/results/](other_models/results) are packaged as Hub models. Each repo holds all four feature ablations (`cgm`, `insulin`, `carbs`, `all`) and the active one is selected via the `ablation=` kwarg:
+
+```bash
+python benchmark.py --model ridge,ridge-cgm,lightgbm-insulin --batch_size 16 --device cpu
+```
+
+Bare `ridge` / `lightgbm` defaults to the `all` ablation. To stage the Hub repos locally before pushing:
+
+```bash
+python scripts/build_other_models_hub.py        # writes hub/ridge and hub/lightgbm
+bash hub/ridge/push.sh                          # uploads to anonymous-4FAD/Ridge
+bash hub/lightgbm/push.sh                       # uploads to anonymous-4FAD/LightGBM
+```
+
+See [hub/README.md](hub/README.md) for details.
 
 ## Generate figures
 
