@@ -19,10 +19,10 @@ def fill_nan_with_zero_within_horizon(df,
 def preprocess(ds_path: str):
     """
     Preprocess the MetaBonet dataset from parquet file.
-    
+
     Args:
         ds_path: Path to the dataset (should contain metabonet_public_2025.parquet)
-    
+
     Returns:
         DataFrame with columns: PtID, DataDtTm, CGM, Insulin
     """
@@ -33,7 +33,7 @@ def preprocess(ds_path: str):
 
     df = fill_nan_with_zero_within_horizon(df, time_col='DataDtTm', target_col='Insulin', horizon='1h')
     df = fill_nan_with_zero_within_horizon(df, time_col='DataDtTm', target_col='Carbs', horizon='6h')
-    df = df[df['Insulin'].notna()]  
+    df = df[df['Insulin'].notna()]
     df = df[df['Carbs'].notna()]
 
     df['DataDtTm'] = pd.to_datetime(df['DataDtTm'])
@@ -41,9 +41,11 @@ def preprocess(ds_path: str):
     df['CGM'] = pd.to_numeric(df['CGM'], errors='coerce')
     df['Insulin'] = pd.to_numeric(df['Insulin'], errors='coerce')
     df['Carbs'] = pd.to_numeric(df['Carbs'], errors='coerce')
-    mdi_filter = df['insulin_delivery_device'] != 'Multiple Daily Injections'
-    mdi_filter = mdi_filter | (df['insulin_delivery_modality'] != 'MDI')
-    df = df[mdi_filter]
+    # Drop rows flagged MDI by either column. Compare positively and fill
+    # missing values so unknown delivery method is kept, not silently dropped.
+    is_mdi = ((df['insulin_delivery_device'] == 'Multiple Daily Injections')
+              | (df['insulin_delivery_modality'] == 'MDI'))
+    df = df[~is_mdi.fillna(False)]
     df['Carbs'] = df['Carbs'].clip(lower=0.0, upper=200.0)
 
     df = df.sort_values(['DatasetName', 'PtID', 'DataDtTm'])
